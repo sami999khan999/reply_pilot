@@ -6,7 +6,8 @@
   "minimum_chrome_version": "138",
   "permissions": ["storage"],
   "action": {
-    "default_title": "Reply Pilot"
+    "default_title": "Reply Pilot",
+    "default_popup": "src/popup/popup.html"
   },
   "background": {
     "service_worker": "src/worker/service-worker.js",
@@ -25,7 +26,7 @@
   ],
   "web_accessible_resources": [
     {
-      "resources": ["src/content/*"],
+      "resources": ["src/content/*", "src/shared/*"],
       "matches": [
         "https://web.whatsapp.com/*",
         "https://www.messenger.com/*",

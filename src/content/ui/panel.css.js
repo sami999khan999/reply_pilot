@@ -791,4 +791,168 @@ export const PANEL_CSS = /* css */`
     from { opacity: 0; transform: translateY(6px); }
     to   { opacity: 1; transform: translateY(0); }
   }
+
+  /* ── CONFIG / LAUNCH SCREEN ── */
+  .rp-config {
+    animation: rp-fade-in 0.3s ease;
+  }
+
+  .rp-config-lead {
+    font-size: 12.5px;
+    color: var(--rp-muted);
+    line-height: 1.5;
+    margin-bottom: 16px;
+  }
+
+  .rp-field {
+    background: rgba(17, 26, 48, 0.6);
+    border: 1px solid var(--rp-border);
+    border-radius: var(--rp-radius);
+    padding: 13px 14px;
+    margin-bottom: 12px;
+  }
+
+  .rp-field-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 10px;
+    margin-bottom: 11px;
+  }
+
+  .rp-field .rp-section-label {
+    margin-bottom: 0;
+  }
+
+  .rp-field-val {
+    font-family: var(--rp-mono);
+    font-size: 19px;
+    font-weight: 700;
+    line-height: 1;
+    color: var(--rp-text);
+    text-shadow: 0 0 12px var(--rp-amber-glow);
+  }
+
+  .rp-field-hint {
+    font-size: 10.5px;
+    color: var(--rp-dim);
+    line-height: 1.5;
+    margin-top: 9px;
+  }
+
+  .rp-field .rp-section-label {
+    color: var(--rp-amber);
+  }
+
+  /* Sliders (shared look with the popup) */
+  .rp-slider {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 100%;
+    height: 6px;
+    border-radius: 999px;
+    background: var(--rp-surface-2);
+    background-image: linear-gradient(90deg, var(--rp-amber), var(--rp-amber-2));
+    background-repeat: no-repeat;
+    background-size: 40% 100%;
+    outline: none;
+    cursor: pointer;
+  }
+
+  .rp-slider::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 17px;
+    height: 17px;
+    border-radius: 50%;
+    background: #fff5e6;
+    border: 3px solid var(--rp-amber-2);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5), 0 0 0 4px rgba(255, 170, 70, 0.14);
+    cursor: pointer;
+    transition: transform var(--rp-transition), box-shadow var(--rp-transition);
+  }
+
+  .rp-slider::-webkit-slider-thumb:hover { transform: scale(1.12); }
+  .rp-slider:active::-webkit-slider-thumb {
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5), 0 0 0 6px rgba(255, 170, 70, 0.24);
+  }
+  .rp-slider:focus-visible::-webkit-slider-thumb {
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5), 0 0 0 6px rgba(255, 170, 70, 0.3);
+  }
+
+  /* Reference textarea */
+  .rp-textarea {
+    width: 100%;
+    margin-top: 10px;
+    resize: none;
+    background: var(--rp-bg);
+    border: 1px solid var(--rp-border);
+    border-radius: var(--rp-radius-sm);
+    padding: 10px 11px;
+    color: var(--rp-text);
+    font-family: inherit;
+    font-size: 12.5px;
+    line-height: 1.5;
+    transition: border-color var(--rp-transition), box-shadow var(--rp-transition);
+  }
+
+  .rp-textarea::placeholder { color: var(--rp-dim); }
+
+  .rp-textarea:focus {
+    outline: none;
+    border-color: var(--rp-amber);
+    box-shadow: 0 0 0 3px rgba(255, 170, 70, 0.14);
+  }
+
+  /* Estimate readout */
+  .rp-estimate {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 11px 14px;
+    margin: 4px 0 16px;
+    border-radius: var(--rp-radius);
+    border: 1px dashed var(--rp-border-strong);
+    background: rgba(45, 212, 191, 0.05);
+    font-family: var(--rp-mono);
+    font-size: 11px;
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+    color: var(--rp-muted);
+  }
+
+  .rp-estimate svg {
+    width: 15px;
+    height: 15px;
+    color: var(--rp-radar);
+    flex-shrink: 0;
+  }
+
+  .rp-estimate strong {
+    margin-left: auto;
+    color: var(--rp-radar);
+    font-size: 13px;
+    font-weight: 700;
+    text-transform: none;
+    letter-spacing: 0.4px;
+  }
+
+  /* Launch button */
+  .rp-launch-btn {
+    width: 100%;
+    justify-content: center;
+    padding: 13px;
+    font-size: 13.5px;
+    letter-spacing: 0.3px;
+  }
+
+  .rp-launch-btn svg {
+    width: 16px;
+    height: 16px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 2;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
 `;

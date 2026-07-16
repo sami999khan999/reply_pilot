@@ -48,7 +48,7 @@ export class MessengerAdapter extends BaseAdapter {
       await this.#scrollUpToLoad(list, maxMessages);
     }
 
-    return this.#extractVisibleMessages(list);
+    return this.#extractVisibleMessages(list, maxMessages);
   }
 
   async #scrollUpToLoad(list, targetCount) {
@@ -65,7 +65,11 @@ export class MessengerAdapter extends BaseAdapter {
     await new Promise(r => setTimeout(r, 200));
   }
 
-  #extractVisibleMessages(list) {
+  /**
+   * @param {Element} list
+   * @param {number} [maxMessages] keep only the most recent N (mine + others').
+   */
+  #extractVisibleMessages(list, maxMessages = Infinity) {
     const isGroup = this.isGroupChat();
     const messages = [];
     this.#seen.clear();
@@ -120,6 +124,7 @@ export class MessengerAdapter extends BaseAdapter {
       });
     });
 
-    return messages;
+    // Keep the most recent N (chronological tail), mine and others' both count.
+    return Number.isFinite(maxMessages) ? messages.slice(-maxMessages) : messages;
   }
 }

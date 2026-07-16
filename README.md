@@ -125,5 +125,5 @@ The project is structured in phases matching the plan:
 ## Privacy
 
 - **Nothing is sent to any server.** Scraping happens in-page, inference on-device via Gemini Nano.
-- **Only settings** (display name preferences, if added) are stored in `chrome.storage` — never message content.
+- **Only settings** (e.g. how many messages to read, set from the toolbar popup) are stored in `chrome.storage` — never message content.
 - No analytics, no telemetry, no network requests.

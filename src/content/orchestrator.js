@@ -7,6 +7,7 @@
 import { classify } from './logic/classifier.js';
 import { findRoot } from './logic/rootFinder.js';
 import { insertIntoComposer } from './logic/composerInsert.js';
+import { getSettings, saveSettings } from '../shared/settings.js';
 
 /**
  * @param {{
@@ -15,6 +16,23 @@ import { insertIntoComposer } from './logic/composerInsert.js';
  * }} deps
  */
 export function createOrchestrator({ adapter, panel }) {
+
+  // Context from the most recent generate, so "Generate more" can re-send it if
+  // the (MV3) service worker was terminated and lost its warm session.
+  let lastGenerate = null;   // { messages, rootMessage, ackSamples, conversationType, myName, replyCount, referenceNote }
+  let shownReplies = [];     // every reply option shown so far (to avoid repeats)
+
+  /**
+   * Opens the panel to its launch/config screen (no generation yet).
+   * Generation only starts when the user presses the Generate button.
+   */
+  async function openConfig() {
+    panel.open();
+    const settings = await getSettings();
+    panel.showConfig(settings, {
+      onGenerate: (params) => onGenerate(params),
+    });
+  }
 
   /** Sends a message to the service worker and returns its response. */
   async function workerMessage(type, payload = {}) {
@@ -38,13 +56,22 @@ export function createOrchestrator({ adapter, panel }) {
   }
 
   /**
-   * Main entry point — called on FAB click.
+   * Main entry point — called when the user presses Generate in the panel.
+   * @param {{ messageCount?: number, replyCount?: number, referenceNote?: string, ignoreClassification?: boolean }} [params]
    */
-  async function onGenerate() {
+  async function onGenerate(params = {}) {
     panel.open();
     panel.showLoading('Scanning the conversation…');
 
     try {
+      // Resolve settings: explicit params (from the config screen) win, else
+      // fall back to stored settings. Persist so the popup stays in sync.
+      const stored = await getSettings();
+      const messageCount = params.messageCount ?? stored.messageCount;
+      const replyCount = params.replyCount ?? stored.replyCount;
+      const referenceNote = params.referenceNote ?? stored.referenceNote;
+      saveSettings({ messageCount, replyCount, referenceNote });
+
       // ── 1. Check AI availability ─────────────────────────────────────────
       const avail = await checkAvailability();
 
@@ -71,7 +98,9 @@ export function createOrchestrator({ adapter, panel }) {
         return;
       }
 
-      const messages = await adapter.scrapeMessages({ maxMessages: 80, scrollForHistory: true });
+      // messageCount caps both the scroll-back and the final window — counting
+      // your own messages and everyone else's together toward the total.
+      const messages = await adapter.scrapeMessages({ maxMessages: messageCount, scrollForHistory: true });
 
       if (!messages || messages.length === 0) {
         panel.showError(
@@ -93,18 +122,26 @@ export function createOrchestrator({ adapter, panel }) {
 
       const conversationType = adapter.isGroupChat() ? 'group' : 'direct';
 
+      // Remember the context so "Generate more" can rebuild if the worker's
+      // warm session is lost (MV3 termination).
+      lastGenerate = { messages, rootMessage, ackSamples, conversationType, myName, replyCount, referenceNote };
+      shownReplies = [];
+
       const result = await workerMessage('GENERATE', {
         messages,
         rootMessage,
         ackSamples,
         conversationType,
         myName,
+        replyCount,
+        referenceNote,
       });
 
       // Merge heuristic classification with AI result
       // (AI's needsReply takes precedence when confident; else use heuristic)
-      const finalNeedsReply = result.needsReply ?? classification.needsReply;
+      const finalNeedsReply = params.ignoreClassification ? true : (result.needsReply ?? classification.needsReply);
       const finalReason = result.reason || classification.reason;
+      shownReplies = [...(result.replies || [])];
 
       // ── 6. Render results ────────────────────────────────────────────────
       panel.showResults({
@@ -113,7 +150,8 @@ export function createOrchestrator({ adapter, panel }) {
         reason: finalReason,
         summary: result.summary,
         replies: result.replies || [],
-        onDraftAnyway: () => onGenerate(), // re-run but ignore classification
+        replyCount,
+        onDraftAnyway: () => onGenerate({ ...params, ignoreClassification: true }),
       });
 
     } catch (err) {
@@ -128,12 +166,30 @@ export function createOrchestrator({ adapter, panel }) {
   }
 
   /**
-   * Called when "Generate 3 more" is clicked.
+   * Called when "Generate more" is clicked. Re-sends the stored context so the
+   * worker can rebuild even if its warm session was terminated.
    */
   async function onGenerateMore() {
+    if (!lastGenerate) {
+      panel.showToast('Generate replies first.');
+      return;
+    }
     try {
-      const result = await workerMessage('GENERATE_MORE');
-      panel.appendReplies(result.replies || []);
+      const result = await workerMessage('GENERATE_MORE', {
+        replyCount: lastGenerate.replyCount,
+        referenceNote: lastGenerate.referenceNote,
+        previousReplies: shownReplies,
+        context: {
+          messages: lastGenerate.messages,
+          rootMessage: lastGenerate.rootMessage,
+          ackSamples: lastGenerate.ackSamples,
+          conversationType: lastGenerate.conversationType,
+          myName: lastGenerate.myName,
+        },
+      });
+      const replies = result.replies || [];
+      shownReplies = [...shownReplies, ...replies];
+      panel.appendReplies(replies);
     } catch (err) {
       console.error('[ReplyPilot] generateMore error:', err);
       panel.showToast('Failed to generate more — try reopening the panel.');
@@ -154,5 +210,5 @@ export function createOrchestrator({ adapter, panel }) {
     }
   }
 
-  return { onGenerate, onGenerateMore, onInsert };
+  return { openConfig, onGenerate, onGenerateMore, onInsert };
 }

@@ -6,10 +6,15 @@
  */
 
 import { getLanguageModelAPI } from './availability.js';
-import { SYSTEM_PROMPT, RESPONSE_SCHEMA, GENERATE_MORE_PROMPT, MORE_REPLIES_SCHEMA } from './prompts.js';
+import { SYSTEM_PROMPT, buildResponseSchema } from './prompts.js';
 
 /** @type {object|null} */
 let _session = null;
+
+/** @returns {boolean} whether a warm session is currently held. */
+export function hasSession() {
+  return _session !== null;
+}
 
 /**
  * Creates (or reuses) the LanguageModel session.
@@ -53,16 +58,17 @@ async function getSession(opts = {}) {
  * Prompts the model with the full payload and returns parsed JSON.
  *
  * @param {string} payload
- * @param {{ onDownloadProgress?: (e: ProgressEvent) => void }} [opts]
+ * @param {{ onDownloadProgress?: (e: ProgressEvent) => void, replyCount?: number }} [opts]
  * @returns {Promise<{ needsReply: boolean, reason: string, summary: string, replies: string[] }>}
  */
 export async function promptForReplies(payload, opts = {}) {
   const session = await getSession(opts);
+  const schema = buildResponseSchema(opts.replyCount ?? 3);
 
   let raw;
   try {
     // Use responseConstraint for structured output if supported
-    raw = await session.prompt(payload, { responseConstraint: RESPONSE_SCHEMA });
+    raw = await session.prompt(payload, { responseConstraint: schema });
   } catch (constraintErr) {
     // Fallback: prompt without constraint and parse manually
     console.warn('[ReplyPilot] responseConstraint not supported, falling back:', constraintErr);
@@ -78,24 +84,30 @@ export async function promptForReplies(payload, opts = {}) {
 }
 
 /**
- * Sends the "generate more" follow-up turn and returns 3 new reply strings.
+ * Sends the "generate more" follow-up turn on the warm session and returns new
+ * reply strings. Throws if there is no warm session (the caller then rebuilds
+ * from context) — this is the common MV3 case where the worker was terminated
+ * between the initial generate and the follow-up click.
  *
+ * @param {string} morePrompt
+ * @param {object} moreSchema
+ * @param {number} [replyCount]
  * @returns {Promise<string[]>}
  */
-export async function promptForMoreReplies() {
-  if (!_session) throw new Error('No active session — call promptForReplies first.');
+export async function promptForMoreReplies(morePrompt, moreSchema, replyCount = 3) {
+  if (!_session) throw new Error('No active session');
 
   let raw;
   try {
-    raw = await _session.prompt(GENERATE_MORE_PROMPT, { responseConstraint: MORE_REPLIES_SCHEMA });
+    raw = await _session.prompt(morePrompt, { responseConstraint: moreSchema });
   } catch {
-    raw = await _session.prompt(GENERATE_MORE_PROMPT);
+    raw = await _session.prompt(morePrompt);
   }
 
   // The response may be a JSON array or a JSON object with a replies field
   const parsed = parseJSON(raw, []);
-  if (Array.isArray(parsed)) return parsed.slice(0, 3);
-  if (parsed.replies && Array.isArray(parsed.replies)) return parsed.replies.slice(0, 3);
+  if (Array.isArray(parsed)) return parsed.slice(0, replyCount);
+  if (parsed.replies && Array.isArray(parsed.replies)) return parsed.replies.slice(0, replyCount);
   return [];
 }
 

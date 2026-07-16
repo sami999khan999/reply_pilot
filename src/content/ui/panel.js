@@ -2,6 +2,7 @@
  * panel.js — Slide-in panel with all UI states.
  *
  * States:
+ *  - config     (launch screen: settings + Generate button)
  *  - loading
  *  - ai-setup   (model downloading)
  *  - no-reply   (no reply needed)
@@ -16,6 +17,18 @@
  *   onRetry?: () => void,
  * }} opts
  */
+import {
+  clampMessageCount,
+  clampReplyCount,
+  sanitizeReference,
+  formatEstimate,
+  MESSAGE_COUNT_MIN,
+  MESSAGE_COUNT_MAX,
+  REPLY_COUNT_MIN,
+  REPLY_COUNT_MAX,
+  REFERENCE_MAX_LEN,
+} from '../../shared/settings.js';
+
 export function createPanel(shadow, { onClose, onGenerateMore, onInsert, onRetry }) {
   // ── Panel shell ────────────────────────────────────────────────────────────
   const panel = document.createElement('div');
@@ -53,6 +66,8 @@ export function createPanel(shadow, { onClose, onGenerateMore, onInsert, onRetry
   const footer = panel.querySelector('#rp-panel-footer');
   const closeBtn = panel.querySelector('#rp-close-btn');
   let batchCount = 0;
+  let renderedCount = 0;      // total reply cards rendered (across batches)
+  let currentReplyCount = 3;  // how many replies each "generate more" adds
 
   closeBtn.addEventListener('click', () => {
     close();
@@ -67,6 +82,104 @@ export function createPanel(shadow, { onClose, onGenerateMore, onInsert, onRetry
 
   function close() {
     panel.classList.remove('open');
+  }
+
+  /**
+   * Launch/config screen. Nothing generates until the user presses Generate.
+   * @param {{ messageCount: number, replyCount: number, referenceNote: string }} settings
+   * @param {{ onGenerate: (params: { messageCount: number, replyCount: number, referenceNote: string }) => void }} handlers
+   */
+  function showConfig(settings, { onGenerate }) {
+    batchCount = 0;
+    renderedCount = 0;
+    footer.style.display = 'none';
+
+    const mc = clampMessageCount(settings.messageCount);
+    const rc = clampReplyCount(settings.replyCount);
+    const ref = sanitizeReference(settings.referenceNote);
+
+    body.innerHTML = `
+      <div class="rp-config">
+        <p class="rp-config-lead">Set your flight parameters, then launch.</p>
+
+        <div class="rp-field">
+          <div class="rp-field-head">
+            <label class="rp-section-label" for="rp-cfg-messages">Messages to read</label>
+            <output class="rp-field-val" id="rp-cfg-messages-val">${mc}</output>
+          </div>
+          <input type="range" class="rp-slider" id="rp-cfg-messages"
+            min="${MESSAGE_COUNT_MIN}" max="${MESSAGE_COUNT_MAX}" step="1" value="${mc}"
+            aria-label="Messages to read">
+          <p class="rp-field-hint">Your messages and everyone else's both count toward this.</p>
+        </div>
+
+        <div class="rp-field">
+          <div class="rp-field-head">
+            <label class="rp-section-label" for="rp-cfg-replies">Reply options</label>
+            <output class="rp-field-val" id="rp-cfg-replies-val">${rc}</output>
+          </div>
+          <input type="range" class="rp-slider" id="rp-cfg-replies"
+            min="${REPLY_COUNT_MIN}" max="${REPLY_COUNT_MAX}" step="1" value="${rc}"
+            aria-label="Number of reply options">
+          <p class="rp-field-hint">How many drafts to generate each round.</p>
+        </div>
+
+        <div class="rp-field">
+          <label class="rp-section-label" for="rp-cfg-ref">Reference for replies</label>
+          <textarea class="rp-textarea" id="rp-cfg-ref" rows="2" maxlength="${REFERENCE_MAX_LEN}"
+            placeholder="Optional — e.g. keep it formal · say I'll be 10 min late · reply in Bangla">${escapeHtml(ref)}</textarea>
+        </div>
+
+        <div class="rp-estimate">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 15 14"/></svg>
+          <span>Est. generation time</span>
+          <strong id="rp-cfg-estimate">${formatEstimate(mc, rc)}</strong>
+        </div>
+
+        <button class="rp-btn rp-btn-primary rp-launch-btn" id="rp-launch-btn">
+          <svg viewBox="0 0 24 24"><path d="M22 2L11 13M22 2L15 22l-4-9-9-4 20-7z"/></svg>
+          Generate replies
+        </button>
+      </div>
+    `;
+
+    const messagesEl = body.querySelector('#rp-cfg-messages');
+    const messagesValEl = body.querySelector('#rp-cfg-messages-val');
+    const repliesEl = body.querySelector('#rp-cfg-replies');
+    const repliesValEl = body.querySelector('#rp-cfg-replies-val');
+    const refEl = body.querySelector('#rp-cfg-ref');
+    const estimateEl = body.querySelector('#rp-cfg-estimate');
+
+    const paintSlider = (el) => {
+      const min = Number(el.min), max = Number(el.max);
+      const pct = ((Number(el.value) - min) / (max - min)) * 100;
+      el.style.backgroundSize = `${pct}% 100%`;
+    };
+    const refreshEstimate = () => {
+      estimateEl.textContent = formatEstimate(Number(messagesEl.value), Number(repliesEl.value));
+    };
+
+    paintSlider(messagesEl);
+    paintSlider(repliesEl);
+
+    messagesEl.addEventListener('input', () => {
+      messagesValEl.textContent = messagesEl.value;
+      paintSlider(messagesEl);
+      refreshEstimate();
+    });
+    repliesEl.addEventListener('input', () => {
+      repliesValEl.textContent = repliesEl.value;
+      paintSlider(repliesEl);
+      refreshEstimate();
+    });
+
+    body.querySelector('#rp-launch-btn').addEventListener('click', () => {
+      onGenerate({
+        messageCount: clampMessageCount(messagesEl.value),
+        replyCount: clampReplyCount(repliesEl.value),
+        referenceNote: sanitizeReference(refEl.value),
+      });
+    });
   }
 
   function showLoading(label = 'Reading conversation…', sub = '') {
@@ -110,12 +223,15 @@ export function createPanel(shadow, { onClose, onGenerateMore, onInsert, onRetry
    *   reason: string,
    *   summary?: string,
    *   replies?: string[],
+   *   replyCount?: number,
    *   onDraftAnyway?: () => void,
    * }} result
    */
   function showResults(result) {
     batchCount = 0;
-    const { needsReply, confidence, reason, summary, replies = [], onDraftAnyway } = result;
+    renderedCount = 0;
+    const { needsReply, confidence, reason, summary, replies = [], replyCount, onDraftAnyway } = result;
+    if (replyCount) currentReplyCount = clampReplyCount(replyCount);
 
     let statusClass = 'needed';
     let statusTitle = 'Cleared to reply';
@@ -150,7 +266,8 @@ export function createPanel(shadow, { onClose, onGenerateMore, onInsert, onRetry
       `;
     }
 
-    if (replies.length > 0) {
+    const hasReplies = replies.length > 0;
+    if (hasReplies) {
       html += `<div class="rp-replies-header">Suggested replies</div>`;
       html += renderReplyCards(replies, 0);
     } else if (!needsReply && onDraftAnyway) {
@@ -161,6 +278,7 @@ export function createPanel(shadow, { onClose, onGenerateMore, onInsert, onRetry
 
     body.innerHTML = html;
     batchCount = 1;
+    renderedCount = replies.length;
 
     if (!needsReply) {
       const btn = body.querySelector('#rp-draft-anyway');
@@ -168,11 +286,14 @@ export function createPanel(shadow, { onClose, onGenerateMore, onInsert, onRetry
     }
 
     _wireCardButtons();
-    _updateFooter();
+    // Only show "Generate more" once we actually have a first batch of replies.
+    if (hasReplies) _updateFooter();
+    else footer.style.display = 'none';
   }
 
   /** Appends a new batch of reply cards below the existing ones. */
   function appendReplies(replies = []) {
+    if (replies.length === 0) return;
     batchCount++;
 
     const divider = document.createElement('div');
@@ -181,8 +302,9 @@ export function createPanel(shadow, { onClose, onGenerateMore, onInsert, onRetry
     body.appendChild(divider);
 
     const fragment = document.createElement('div');
-    fragment.innerHTML = renderReplyCards(replies, (batchCount - 1) * 3);
+    fragment.innerHTML = renderReplyCards(replies, renderedCount);
     while (fragment.firstChild) body.appendChild(fragment.firstChild);
+    renderedCount += replies.length;
 
     _wireCardButtons();
     _updateFooter();
@@ -256,15 +378,18 @@ export function createPanel(shadow, { onClose, onGenerateMore, onInsert, onRetry
 
   function _updateFooter() {
     footer.style.display = '';
+    const label = `Generate ${currentReplyCount} more`;
     footer.innerHTML = `
       <button class="rp-generate-more-btn" id="rp-gen-more-btn">
         <svg viewBox="0 0 24 24"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 .49-3.4"/></svg>
-        Generate 3 more
+        <span class="rp-gen-more-label">${escapeHtml(label)}</span>
       </button>
     `;
     footer.querySelector('#rp-gen-more-btn').addEventListener('click', async (e) => {
-      e.currentTarget.disabled = true;
-      e.currentTarget.textContent = 'Generating…';
+      const btn = e.currentTarget;
+      btn.disabled = true;
+      const labelEl = btn.querySelector('.rp-gen-more-label');
+      if (labelEl) labelEl.textContent = 'Generating…';
       try {
         await onGenerateMore();
       } finally {
@@ -309,6 +434,7 @@ export function createPanel(shadow, { onClose, onGenerateMore, onInsert, onRetry
     panel,
     open,
     close,
+    showConfig,
     showLoading,
     showAISetup,
     updateAIProgress,
