@@ -28,9 +28,19 @@ import { createOrchestrator } from './orchestrator.js';
 
   // Create panel first (so orchestrator can reference it)
   let panelOpen = false;
+
+  // FAB is shown only when a chat is open AND the panel is closed — the panel's
+  // own header has a close button, so the FAB never overlaps the open panel.
+  function updateFabVisibility() {
+    let chatOpen = false;
+    try { chatOpen = adapter.isChatOpen(); } catch { /* DOM not ready */ }
+    fabCtrl.setVisible(chatOpen && !panelOpen);
+  }
+
   const panelCtrl = createPanel(shadow, {
     onClose() {
       panelOpen = false;
+      updateFabVisibility();
     },
     onGenerateMore() {
       return orchestrator.onGenerateMore();
@@ -40,6 +50,7 @@ import { createOrchestrator } from './orchestrator.js';
     },
     onRetry() {
       panelOpen = true;
+      updateFabVisibility();
       orchestrator.onGenerate();
     },
   });
@@ -47,16 +58,13 @@ import { createOrchestrator } from './orchestrator.js';
   // Create orchestrator
   const orchestrator = createOrchestrator({ adapter, panel: panelCtrl });
 
-  // Create FAB
+  // Create FAB — opens the panel's launch/config screen (no auto-generate)
   const fabCtrl = createFAB(shadow, {
     onClick() {
-      if (panelOpen) {
-        panelCtrl.close();
-        panelOpen = false;
-        return;
-      }
+      if (panelOpen) return; // FAB is hidden while open, but guard anyway
       panelOpen = true;
-      orchestrator.onGenerate();
+      updateFabVisibility();
+      orchestrator.openConfig();
     },
   });
 
@@ -67,7 +75,6 @@ import { createOrchestrator } from './orchestrator.js';
   function checkChatOpen() {
     try {
       const open = adapter.isChatOpen();
-      fabCtrl.setVisible(open);
       if (!open && panelOpen) {
         panelCtrl.close();
         panelOpen = false;
@@ -75,6 +82,7 @@ import { createOrchestrator } from './orchestrator.js';
     } catch {
       // DOM may not be ready yet — ignore
     }
+    updateFabVisibility();
   }
 
   // Initial check after a short delay to let the app render

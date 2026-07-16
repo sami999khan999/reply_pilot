@@ -121,7 +121,7 @@ export class WhatsAppAdapter extends BaseAdapter {
       await this.#scrollUpToLoad(list, maxMessages);
     }
 
-    return this.#extractVisibleMessages(list);
+    return this.#extractVisibleMessages(list, maxMessages);
   }
 
   /**
@@ -146,11 +146,14 @@ export class WhatsAppAdapter extends BaseAdapter {
   }
 
   /**
-   * Extracts normalized messages from currently rendered rows.
+   * Extracts normalized messages from currently rendered rows, keeping only
+   * the most recent `maxMessages` (your own messages and others' both count
+   * toward the total).
    * @param {Element} list
+   * @param {number} [maxMessages]
    * @returns {import('./base.js').Message[]}
    */
-  #extractVisibleMessages(list) {
+  #extractVisibleMessages(list, maxMessages = Infinity) {
     const isGroup = this.isGroupChat();
     const messages = [];
     this.#seen.clear();
@@ -216,6 +219,8 @@ export class WhatsAppAdapter extends BaseAdapter {
       });
     });
 
-    return messages;
+    // Rows are in chronological order (oldest first), so the tail is the most
+    // recent conversation — keep the last N, interleaving mine and others'.
+    return Number.isFinite(maxMessages) ? messages.slice(-maxMessages) : messages;
   }
 }

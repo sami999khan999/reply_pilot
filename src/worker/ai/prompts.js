@@ -11,22 +11,28 @@ Rules:
 - Do not add pleasantries or filler unless the conversation's register calls for them.
 - Output ONLY valid JSON matching the schema — no extra commentary, no markdown fences.`;
 
-/** JSON schema for the model's response constraint */
-export const RESPONSE_SCHEMA = {
-  type: 'object',
-  properties: {
-    needsReply: { type: 'boolean' },
-    reason: { type: 'string' },
-    summary: { type: 'string' },
-    replies: {
-      type: 'array',
-      items: { type: 'string' },
-      minItems: 3,
-      maxItems: 3,
+/**
+ * JSON schema for the model's response constraint.
+ * @param {number} [replyCount] how many reply options to require
+ */
+export function buildResponseSchema(replyCount = 3) {
+  const n = Math.max(1, Math.round(replyCount));
+  return {
+    type: 'object',
+    properties: {
+      needsReply: { type: 'boolean' },
+      reason: { type: 'string' },
+      summary: { type: 'string' },
+      replies: {
+        type: 'array',
+        items: { type: 'string' },
+        minItems: n,
+        maxItems: n,
+      },
     },
-  },
-  required: ['needsReply', 'reason', 'summary', 'replies'],
-};
+    required: ['needsReply', 'reason', 'summary', 'replies'],
+  };
+}
 
 /**
  * Builds the user-turn payload sent to the model.
@@ -38,6 +44,9 @@ export const RESPONSE_SCHEMA = {
  *   rootMessageText: string,
  *   ackSamples: string[],
  *   recentRaw: string,
+ *   replyCount?: number,
+ *   referenceNote?: string,
+ *   excludeReplies?: string[],
  * }} opts
  * @returns {string}
  */
@@ -48,7 +57,11 @@ export function buildPayload({
   rootMessageText,
   ackSamples,
   recentRaw,
+  replyCount = 3,
+  referenceNote = '',
+  excludeReplies = [],
 }) {
+  const n = Math.max(1, Math.round(replyCount));
   const parts = [
     `CONVERSATION TYPE: ${conversationType}`,
     `MY NAME: ${myName}`,
@@ -68,26 +81,54 @@ export function buildPayload({
 
   parts.push(`RECENT MESSAGES:\n${recentRaw}`);
 
+  if (referenceNote) {
+    parts.push(
+      `USER'S INSTRUCTIONS FOR THE REPLIES (follow these closely):\n${referenceNote}`
+    );
+  }
+
+  if (excludeReplies.length > 0) {
+    parts.push(
+      `DO NOT REPEAT THESE ALREADY-SUGGESTED REPLIES (produce fresh, different ones):\n` +
+      excludeReplies.map(r => `- ${r}`).join('\n')
+    );
+  }
+
   parts.push(
     `TASK: Decide needsReply. Write a 1-sentence summary of the conversation. ` +
-    `Produce exactly 3 reply options I could send, varied in tone (formal, neutral, casual), ` +
-    `matching the register shown above. Output only valid JSON.`
+    `Produce exactly ${n} reply option${n === 1 ? '' : 's'} I could send, varied in tone` +
+    `${n > 1 ? ' (e.g. formal, neutral, casual)' : ''}, matching the register shown above` +
+    `${referenceNote ? ' and the user instructions' : ''}. Output only valid JSON.`
   );
 
   return parts.join('\n\n');
 }
 
 /**
- * The follow-up prompt for "Generate 3 more".
+ * The follow-up prompt for "Generate N more".
+ * @param {number} [replyCount]
+ * @param {string} [referenceNote]
  */
-export const GENERATE_MORE_PROMPT =
-  'Give 3 different alternative replies, varied in tone — no repeats of previous options. ' +
-  'Output only a JSON array of 3 strings: ["reply1", "reply2", "reply3"]';
+export function buildMorePrompt(replyCount = 3, referenceNote = '') {
+  const n = Math.max(1, Math.round(replyCount));
+  return (
+    `Give ${n} different alternative repl${n === 1 ? 'y' : 'ies'}, varied in tone — ` +
+    `no repeats of any previous options` +
+    `${referenceNote ? `, still following the user's instructions (${referenceNote})` : ''}. ` +
+    `Output only a JSON array of ${n} string${n === 1 ? '' : 's'}.`
+  );
+}
 
-/** Schema for the generate-more response */
-export const MORE_REPLIES_SCHEMA = {
-  type: 'array',
-  items: { type: 'string' },
-  minItems: 3,
-  maxItems: 3,
-};
+/**
+ * Schema for the generate-more response.
+ * @param {number} [replyCount]
+ */
+export function buildMoreSchema(replyCount = 3) {
+  const n = Math.max(1, Math.round(replyCount));
+  return {
+    type: 'array',
+    items: { type: 'string' },
+    minItems: n,
+    maxItems: n,
+  };
+}
