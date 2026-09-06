@@ -1,18 +1,19 @@
 /**
  * panel.js — Slide-in panel with all UI states.
  *
- * States:
- *  - config     (launch screen: settings + Generate button)
- *  - loading
- *  - ai-setup   (model downloading)
- *  - no-reply   (no reply needed)
- *  - results    (summary + reply cards)
- *  - error
+ * States: config (launch screen), loading, ai-setup, results, error.
+ *
+ * Two things shape the implementation. Every piece of text that came from the
+ * conversation or the model is written with `textContent`, never interpolated
+ * into markup — so there is no hand-rolled HTML escaping to get wrong, and reply
+ * text never round-trips through a `data-` attribute. And all interaction runs
+ * through delegated listeners on the panel root, so appending a batch of replies
+ * costs one insertion rather than re-binding every card that came before it.
  *
  * @param {ShadowRoot} shadow
  * @param {{
  *   onClose: () => void,
- *   onGenerateMore: () => void,
+ *   onGenerateMore: () => void | Promise<void>,
  *   onInsert: (text: string) => void,
  *   onRetry?: () => void,
  * }} opts
@@ -29,6 +30,15 @@ import {
   REFERENCE_MAX_LEN,
 } from '../../shared/settings.js';
 
+const ICON_SEND = '<svg viewBox="0 0 24 24"><path d="M22 2L11 13M22 2L15 22l-4-9-9-4 20-7z"/></svg>';
+const ICON_COPY = '<svg viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>';
+const ICON_TICK = '<svg viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg>';
+const ICON_REFRESH = '<svg viewBox="0 0 24 24"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 .49-3.4"/></svg>';
+const ICON_ALERT = '<svg class="rp-status-icon" viewBox="0 0 24 24" fill="none" stroke-width="2.5" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>';
+const ICON_CHECK = '<svg class="rp-status-icon" viewBox="0 0 24 24" fill="none" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>';
+
+const COPIED_RESET_MS = 1800;
+
 export function createPanel(shadow, { onClose, onGenerateMore, onInsert, onRetry }) {
   // ── Panel shell ────────────────────────────────────────────────────────────
   const panel = document.createElement('div');
@@ -38,25 +48,19 @@ export function createPanel(shadow, { onClose, onGenerateMore, onInsert, onRetry
 
   panel.innerHTML = `
     <div class="rp-panel-header">
-      <div class="rp-panel-logo">
-        <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-          <path d="M22 2L11 13M22 2L15 22l-4-9-9-4 20-7z"/>
-        </svg>
-      </div>
+      <div class="rp-panel-logo">${ICON_SEND}</div>
       <div class="rp-panel-title">
         <h2>Reply Pilot</h2>
         <span>Co-pilot online · On-device</span>
       </div>
-      <button class="rp-close-btn" id="rp-close-btn" aria-label="Close panel">
+      <button class="rp-close-btn" data-action="close" aria-label="Close panel">
         <svg viewBox="0 0 24 24">
           <line x1="18" y1="6" x2="6" y2="18"/>
           <line x1="6" y1="6" x2="18" y2="18"/>
         </svg>
       </button>
     </div>
-    <div class="rp-panel-body" id="rp-panel-body">
-      <!-- State is rendered here by JS -->
-    </div>
+    <div class="rp-panel-body" id="rp-panel-body"></div>
     <div class="rp-panel-footer" id="rp-panel-footer" style="display:none;"></div>
   `;
 
@@ -64,39 +68,58 @@ export function createPanel(shadow, { onClose, onGenerateMore, onInsert, onRetry
 
   const body = panel.querySelector('#rp-panel-body');
   const footer = panel.querySelector('#rp-panel-footer');
-  const closeBtn = panel.querySelector('#rp-close-btn');
-  let batchCount = 0;
-  let renderedCount = 0;      // total reply cards rendered (across batches)
-  let currentReplyCount = 3;  // how many replies each "generate more" adds
 
-  closeBtn.addEventListener('click', () => {
-    close();
-    onClose();
+  // ── State ──────────────────────────────────────────────────────────────────
+  let batchCount = 0;
+  let currentReplyCount = 3;
+  /** Reply text, indexed by a card's data-idx. Cards hold the index, not the text. */
+  let replyTexts = [];
+  /** Per-render callbacks supplied by the orchestrator. */
+  let onGenerateConfig = null;
+  let onDraftAnyway = null;
+
+  // ── Delegated interaction ──────────────────────────────────────────────────
+  // One listener for the panel's whole lifetime, instead of re-binding every
+  // reply card's buttons after each appended batch.
+
+  panel.addEventListener('click', (event) => {
+    const el = event.target.closest?.('[data-action]');
+    if (!el) return;
+
+    switch (el.dataset.action) {
+      case 'close':        close(); onClose(); break;
+      case 'insert':       onInsert(replyTexts[Number(el.dataset.idx)] ?? ''); break;
+      case 'copy':         copyReply(el); break;
+      case 'generate':     onGenerateConfig?.(readConfig()); break;
+      case 'more':         generateMore(el); break;
+      case 'draft-anyway': onDraftAnyway?.(); break;
+      case 'retry':
+        if (onRetry) onRetry();
+        else { close(); onClose(); }
+        break;
+    }
+  });
+
+  panel.addEventListener('input', (event) => {
+    if (event.target.classList?.contains('rp-slider')) refreshConfig();
   });
 
   // ── Public API ─────────────────────────────────────────────────────────────
 
-  function open() {
-    panel.classList.add('open');
-  }
-
-  function close() {
-    panel.classList.remove('open');
-  }
+  function open() { panel.classList.add('open'); }
+  function close() { panel.classList.remove('open'); }
 
   /**
    * Launch/config screen. Nothing generates until the user presses Generate.
    * @param {{ messageCount: number, replyCount: number, referenceNote: string }} settings
-   * @param {{ onGenerate: (params: { messageCount: number, replyCount: number, referenceNote: string }) => void }} handlers
+   * @param {{ onGenerate: (params: object) => void }} handlers
    */
-  function showConfig(settings, { onGenerate }) {
-    batchCount = 0;
-    renderedCount = 0;
-    footer.style.display = 'none';
+  function showConfig(settings, handlers) {
+    resetState();
+    onGenerateConfig = handlers.onGenerate;
 
     const mc = clampMessageCount(settings.messageCount);
     const rc = clampReplyCount(settings.replyCount);
-    const ref = sanitizeReference(settings.referenceNote);
 
     body.innerHTML = `
       <div class="rp-config">
@@ -127,7 +150,7 @@ export function createPanel(shadow, { onClose, onGenerateMore, onInsert, onRetry
         <div class="rp-field">
           <label class="rp-section-label" for="rp-cfg-ref">Reference for replies</label>
           <textarea class="rp-textarea" id="rp-cfg-ref" rows="2" maxlength="${REFERENCE_MAX_LEN}"
-            placeholder="Optional — e.g. keep it formal · say I'll be 10 min late · reply in Bangla">${escapeHtml(ref)}</textarea>
+            placeholder="Optional — e.g. keep it formal · say I'll be 10 min late · reply in Bangla"></textarea>
         </div>
 
         <div class="rp-estimate">
@@ -136,73 +159,41 @@ export function createPanel(shadow, { onClose, onGenerateMore, onInsert, onRetry
           <strong id="rp-cfg-estimate">${formatEstimate(mc, rc)}</strong>
         </div>
 
-        <button class="rp-btn rp-btn-primary rp-launch-btn" id="rp-launch-btn">
-          <svg viewBox="0 0 24 24"><path d="M22 2L11 13M22 2L15 22l-4-9-9-4 20-7z"/></svg>
+        <button class="rp-btn rp-btn-primary rp-launch-btn" data-action="generate">
+          ${ICON_SEND}
           Generate replies
         </button>
       </div>
     `;
 
-    const messagesEl = body.querySelector('#rp-cfg-messages');
-    const messagesValEl = body.querySelector('#rp-cfg-messages-val');
-    const repliesEl = body.querySelector('#rp-cfg-replies');
-    const repliesValEl = body.querySelector('#rp-cfg-replies-val');
-    const refEl = body.querySelector('#rp-cfg-ref');
-    const estimateEl = body.querySelector('#rp-cfg-estimate');
+    // User-supplied text is assigned, never interpolated.
+    body.querySelector('#rp-cfg-ref').value = sanitizeReference(settings.referenceNote);
 
-    const paintSlider = (el) => {
-      const min = Number(el.min), max = Number(el.max);
-      const pct = ((Number(el.value) - min) / (max - min)) * 100;
-      el.style.backgroundSize = `${pct}% 100%`;
-    };
-    const refreshEstimate = () => {
-      estimateEl.textContent = formatEstimate(Number(messagesEl.value), Number(repliesEl.value));
-    };
-
-    paintSlider(messagesEl);
-    paintSlider(repliesEl);
-
-    messagesEl.addEventListener('input', () => {
-      messagesValEl.textContent = messagesEl.value;
-      paintSlider(messagesEl);
-      refreshEstimate();
-    });
-    repliesEl.addEventListener('input', () => {
-      repliesValEl.textContent = repliesEl.value;
-      paintSlider(repliesEl);
-      refreshEstimate();
-    });
-
-    body.querySelector('#rp-launch-btn').addEventListener('click', () => {
-      onGenerate({
-        messageCount: clampMessageCount(messagesEl.value),
-        replyCount: clampReplyCount(repliesEl.value),
-        referenceNote: sanitizeReference(refEl.value),
-      });
-    });
+    paintSlider(body.querySelector('#rp-cfg-messages'));
+    paintSlider(body.querySelector('#rp-cfg-replies'));
   }
 
   function showLoading(label = 'Reading conversation…', sub = '') {
-    batchCount = 0;
-    footer.style.display = 'none';
+    resetState();
     body.innerHTML = `
       <div class="rp-state-loading">
         <div class="rp-radar"><span class="rp-radar-blip"></span></div>
-        <p class="rp-loading-label">${escapeHtml(label)}</p>
-        ${sub ? `<p class="rp-loading-sub">${escapeHtml(sub)}</p>` : ''}
+        <p class="rp-loading-label"></p>
+        ${sub ? '<p class="rp-loading-sub"></p>' : ''}
       </div>
     `;
+    body.querySelector('.rp-loading-label').textContent = label;
+    if (sub) body.querySelector('.rp-loading-sub').textContent = sub;
   }
 
   function showAISetup(progress = 0) {
-    batchCount = 0;
-    footer.style.display = 'none';
+    resetState();
     body.innerHTML = `
       <div class="rp-ai-setup">
         <h3>Pre-flight check: downloading the model…</h3>
         <p>Gemini Nano is downloading (one-time ~2 GB). This may take a few minutes — everything stays on your device.</p>
         <div class="rp-progress-bar">
-          <div class="rp-progress-fill" id="rp-progress-fill" style="width: ${Math.round(progress * 100)}%"></div>
+          <div class="rp-progress-fill" id="rp-progress-fill" style="width: ${percent(progress)}"></div>
         </div>
       </div>
       <div class="rp-state-loading" style="min-height:120px;">
@@ -213,7 +204,7 @@ export function createPanel(shadow, { onClose, onGenerateMore, onInsert, onRetry
 
   function updateAIProgress(progress = 0) {
     const fill = body.querySelector('#rp-progress-fill');
-    if (fill) fill.style.width = `${Math.round(progress * 100)}%`;
+    if (fill) fill.style.width = percent(progress);
   }
 
   /**
@@ -229,71 +220,38 @@ export function createPanel(shadow, { onClose, onGenerateMore, onInsert, onRetry
    * }} result
    */
   function showResults(result) {
-    batchCount = 0;
-    renderedCount = 0;
-    const { needsReply, confidence, reason, summary, replies = [], replyCount, historyNote, onDraftAnyway } = result;
+    const { needsReply, confidence, reason, summary, replies = [], replyCount, historyNote } = result;
+
+    resetState();
+    onDraftAnyway = result.onDraftAnyway || null;
     if (replyCount) currentReplyCount = clampReplyCount(replyCount);
 
-    let statusClass = 'needed';
-    let statusTitle = 'Cleared to reply';
-    let statusIcon = `<svg class="rp-status-icon" viewBox="0 0 24 24" fill="none" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>`;
-
-    if (!needsReply) {
-      statusClass = 'not-needed';
-      statusTitle = 'Stand by — no reply needed';
-      statusIcon = `<svg class="rp-status-icon" viewBox="0 0 24 24" fill="none" stroke-width="2.5" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>`;
-    } else if (confidence === 'low') {
-      statusClass = 'optional';
-      statusTitle = 'Optional acknowledgement';
-      statusIcon = `<svg class="rp-status-icon" viewBox="0 0 24 24" fill="none" stroke-width="2.5" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>`;
-    }
-
-    let html = `
-      <div class="rp-reply-status ${statusClass}">
-        ${statusIcon}
-        <div class="rp-status-text">
-          <strong>${statusTitle}</strong>
-          ${escapeHtml(reason)}
-        </div>
-      </div>
-    `;
+    body.appendChild(renderStatus(needsReply, confidence, reason));
 
     if (historyNote) {
-      html += `<p class="rp-history-note">${escapeHtml(historyNote)}</p>`;
+      body.appendChild(makeEl('p', 'rp-history-note', historyNote));
     }
 
     if (summary) {
-      html += `
-        <div class="rp-summary-block">
-          <div class="rp-section-label">Briefing</div>
-          <p class="rp-summary-text">${escapeHtml(summary)}</p>
-        </div>
-      `;
+      const block = makeEl('div', 'rp-summary-block');
+      block.appendChild(makeEl('div', 'rp-section-label', 'Briefing'));
+      block.appendChild(makeEl('p', 'rp-summary-text', summary));
+      body.appendChild(block);
     }
 
-    const hasReplies = replies.length > 0;
-    if (hasReplies) {
-      html += `<div class="rp-replies-header">Suggested replies</div>`;
-      html += renderReplyCards(replies, 0);
+    if (replies.length > 0) {
+      body.appendChild(makeEl('div', 'rp-replies-header', 'Suggested replies'));
+      body.appendChild(buildReplyCards(replies));
+      batchCount = 1;
+      showFooter();
     } else if (!needsReply && onDraftAnyway) {
-      html += `<p style="text-align:center;margin-top:20px;">
-        <button class="rp-draft-anyway" id="rp-draft-anyway">Draft a reply anyway →</button>
-      </p>`;
+      const wrap = makeEl('p');
+      wrap.style.cssText = 'text-align:center;margin-top:20px;';
+      const btn = makeEl('button', 'rp-draft-anyway', 'Draft a reply anyway →');
+      btn.dataset.action = 'draft-anyway';
+      wrap.appendChild(btn);
+      body.appendChild(wrap);
     }
-
-    body.innerHTML = html;
-    batchCount = 1;
-    renderedCount = replies.length;
-
-    if (!needsReply) {
-      const btn = body.querySelector('#rp-draft-anyway');
-      btn?.addEventListener('click', onDraftAnyway);
-    }
-
-    _wireCardButtons();
-    // Only show "Generate more" once we actually have a first batch of replies.
-    if (hasReplies) _updateFooter();
-    else footer.style.display = 'none';
   }
 
   /** Appends a new batch of reply cards below the existing ones. */
@@ -301,118 +259,38 @@ export function createPanel(shadow, { onClose, onGenerateMore, onInsert, onRetry
     if (replies.length === 0) return;
     batchCount++;
 
-    const divider = document.createElement('div');
-    divider.className = 'rp-batch-divider';
-    divider.textContent = `Round ${String(batchCount).padStart(2, '0')}`;
+    const divider = makeEl('div', 'rp-batch-divider', `Round ${String(batchCount).padStart(2, '0')}`);
     body.appendChild(divider);
 
-    const fragment = document.createElement('div');
-    fragment.innerHTML = renderReplyCards(replies, renderedCount);
-    while (fragment.firstChild) body.appendChild(fragment.firstChild);
-    renderedCount += replies.length;
+    const cards = buildReplyCards(replies);
+    const firstCard = cards.firstElementChild;
+    body.appendChild(cards);
 
-    _wireCardButtons();
-    _updateFooter();
-    body.scrollTop = body.scrollHeight;
+    showFooter();
+    // Scrolling into view beats reading scrollHeight, which forces a layout.
+    (firstCard || divider).scrollIntoView({ block: 'nearest' });
   }
 
   function showError(title = 'Something went wrong', desc = '') {
-    footer.style.display = 'none';
+    resetState();
     body.innerHTML = `
       <div class="rp-error-state">
         <div class="rp-error-icon">
           <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
         </div>
-        <p class="rp-error-title">${escapeHtml(title)}</p>
-        ${desc ? `<p class="rp-error-desc">${escapeHtml(desc)}</p>` : ''}
-        <button class="rp-btn rp-btn-ghost" id="rp-retry-btn" style="margin-top:8px;">Try Again</button>
+        <p class="rp-error-title"></p>
+        ${desc ? '<p class="rp-error-desc"></p>' : ''}
+        <button class="rp-btn rp-btn-ghost" data-action="retry" style="margin-top:8px;">Try Again</button>
       </div>
     `;
-    body.querySelector('#rp-retry-btn')?.addEventListener('click', () => {
-      if (onRetry) {
-        onRetry();
-      } else {
-        close();
-        onClose();
-      }
-    });
+    body.querySelector('.rp-error-title').textContent = title;
+    if (desc) body.querySelector('.rp-error-desc').textContent = desc;
   }
-
-  // ── Helpers ────────────────────────────────────────────────────────────────
-
-  function renderReplyCards(replies, startIndex) {
-    return replies.map((text, i) => {
-      const idx = startIndex + i + 1;
-      return `
-        <div class="rp-reply-card" data-card-index="${idx - 1}">
-          <span class="rp-reply-card-badge">Option ${String(idx).padStart(2, '0')}</span>
-          <p class="rp-reply-card-text">${escapeHtml(text)}</p>
-          <div class="rp-reply-card-actions">
-            <button class="rp-btn rp-btn-primary rp-insert-btn" data-text="${escapeAttr(text)}">
-              <svg viewBox="0 0 24 24"><path d="M22 2L11 13M22 2L15 22l-4-9-9-4 20-7z"/></svg>
-              Insert
-            </button>
-            <button class="rp-btn rp-btn-ghost rp-copy-btn" data-text="${escapeAttr(text)}">
-              <svg viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
-              Copy
-            </button>
-          </div>
-        </div>
-      `;
-    }).join('');
-  }
-
-  function _wireCardButtons() {
-    body.querySelectorAll('.rp-insert-btn').forEach(btn => {
-      btn.onclick = () => onInsert(btn.dataset.text || '');
-    });
-    body.querySelectorAll('.rp-copy-btn').forEach(btn => {
-      btn.onclick = async () => {
-        try {
-          await navigator.clipboard.writeText(btn.dataset.text || '');
-          const orig = btn.innerHTML;
-          btn.className = 'rp-btn rp-btn-success';
-          btn.innerHTML = `<svg viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg> Copied!`;
-          setTimeout(() => { btn.className = 'rp-btn rp-btn-ghost'; btn.innerHTML = orig; }, 1800);
-        } catch {
-          showToast('Copy failed — clipboard permission denied.');
-        }
-      };
-    });
-  }
-
-  function _updateFooter() {
-    footer.style.display = '';
-    const label = `Generate ${currentReplyCount} more`;
-    footer.innerHTML = `
-      <button class="rp-generate-more-btn" id="rp-gen-more-btn">
-        <svg viewBox="0 0 24 24"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 .49-3.4"/></svg>
-        <span class="rp-gen-more-label">${escapeHtml(label)}</span>
-      </button>
-    `;
-    footer.querySelector('#rp-gen-more-btn').addEventListener('click', async (e) => {
-      const btn = e.currentTarget;
-      btn.disabled = true;
-      const labelEl = btn.querySelector('.rp-gen-more-label');
-      if (labelEl) labelEl.textContent = 'Generating…';
-      try {
-        await onGenerateMore();
-      } finally {
-        // appendReplies re-renders the footer on success; this covers failures
-        _updateFooter();
-      }
-    });
-  }
-
-  // ── Toast ──────────────────────────────────────────────────────────────────
 
   function showToast(msg, durationMs = 2200) {
-    const existing = shadow.querySelector('.rp-toast');
-    if (existing) existing.remove();
+    shadow.querySelector('.rp-toast')?.remove();
 
-    const toast = document.createElement('div');
-    toast.className = 'rp-toast';
-    toast.textContent = msg;
+    const toast = makeEl('div', 'rp-toast', msg);
     shadow.appendChild(toast);
 
     setTimeout(() => {
@@ -421,18 +299,153 @@ export function createPanel(shadow, { onClose, onGenerateMore, onInsert, onRetry
     }, durationMs);
   }
 
-  // ── Sanitize ───────────────────────────────────────────────────────────────
+  // ── Rendering helpers ──────────────────────────────────────────────────────
 
-  function escapeHtml(s) {
-    return String(s)
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;');
+  /** Clears per-render state so a stale handler can never fire against new UI. */
+  function resetState() {
+    batchCount = 0;
+    replyTexts = [];
+    onGenerateConfig = null;
+    onDraftAnyway = null;
+    footer.style.display = 'none';
+    footer.replaceChildren();
+    body.replaceChildren();
   }
 
-  function escapeAttr(s) {
-    return escapeHtml(s).replace(/'/g, '&#39;');
+  function renderStatus(needsReply, confidence, reason) {
+    let cls = 'needed';
+    let title = 'Cleared to reply';
+    let icon = ICON_CHECK;
+
+    if (!needsReply) {
+      cls = 'not-needed';
+      title = 'Stand by — no reply needed';
+      icon = ICON_ALERT;
+    } else if (confidence === 'low') {
+      cls = 'optional';
+      title = 'Optional acknowledgement';
+      icon = ICON_ALERT;
+    }
+
+    const wrap = makeEl('div', `rp-reply-status ${cls}`);
+    wrap.innerHTML = icon;
+
+    const text = makeEl('div', 'rp-status-text');
+    text.appendChild(makeEl('strong', '', title));
+    text.appendChild(document.createTextNode(reason || ''));
+    wrap.appendChild(text);
+
+    return wrap;
+  }
+
+  /**
+   * Builds a batch of reply cards into a fragment — one insertion into the live
+   * tree rather than one per card.
+   * @param {string[]} replies
+   */
+  function buildReplyCards(replies) {
+    const fragment = document.createDocumentFragment();
+
+    for (let i = 0; i < replies.length; i++) {
+      const idx = replyTexts.push(replies[i]) - 1;
+
+      const card = makeEl('div', 'rp-reply-card');
+      card.dataset.cardIndex = String(idx);
+
+      card.appendChild(makeEl('span', 'rp-reply-card-badge', `Option ${String(idx + 1).padStart(2, '0')}`));
+      card.appendChild(makeEl('p', 'rp-reply-card-text', replies[i]));
+
+      const actions = makeEl('div', 'rp-reply-card-actions');
+      actions.appendChild(actionButton('insert', idx, 'rp-btn rp-btn-primary rp-insert-btn', ICON_SEND, 'Insert'));
+      actions.appendChild(actionButton('copy', idx, 'rp-btn rp-btn-ghost rp-copy-btn', ICON_COPY, 'Copy'));
+      card.appendChild(actions);
+
+      fragment.appendChild(card);
+    }
+
+    return fragment;
+  }
+
+  function actionButton(action, idx, className, icon, label) {
+    const btn = makeEl('button', className);
+    btn.dataset.action = action;
+    btn.dataset.idx = String(idx);
+    btn.innerHTML = icon;
+    btn.appendChild(document.createTextNode(` ${label}`));
+    return btn;
+  }
+
+  function showFooter() {
+    footer.style.display = '';
+    footer.replaceChildren();
+
+    const btn = makeEl('button', 'rp-generate-more-btn');
+    btn.dataset.action = 'more';
+    btn.innerHTML = ICON_REFRESH;
+    btn.appendChild(makeEl('span', 'rp-gen-more-label', `Generate ${currentReplyCount} more`));
+    footer.appendChild(btn);
+  }
+
+  async function generateMore(btn) {
+    btn.disabled = true;
+    const label = btn.querySelector('.rp-gen-more-label');
+    if (label) label.textContent = 'Generating…';
+    try {
+      await onGenerateMore();
+    } finally {
+      // appendReplies rebuilds the footer on success; this covers failures.
+      showFooter();
+    }
+  }
+
+  async function copyReply(btn) {
+    const text = replyTexts[Number(btn.dataset.idx)] ?? '';
+    try {
+      await navigator.clipboard.writeText(text);
+    } catch {
+      showToast('Copy failed — clipboard permission denied.');
+      return;
+    }
+
+    const original = btn.innerHTML;
+    const originalClass = btn.className;
+    btn.className = 'rp-btn rp-btn-success';
+    btn.innerHTML = `${ICON_TICK} Copied!`;
+    setTimeout(() => {
+      btn.className = originalClass;
+      btn.innerHTML = original;
+    }, COPIED_RESET_MS);
+  }
+
+  // ── Config screen ──────────────────────────────────────────────────────────
+
+  function readConfig() {
+    return {
+      messageCount: clampMessageCount(body.querySelector('#rp-cfg-messages')?.value),
+      replyCount: clampReplyCount(body.querySelector('#rp-cfg-replies')?.value),
+      referenceNote: sanitizeReference(body.querySelector('#rp-cfg-ref')?.value),
+    };
+  }
+
+  function refreshConfig() {
+    const messages = body.querySelector('#rp-cfg-messages');
+    const replies = body.querySelector('#rp-cfg-replies');
+    if (!messages || !replies) return;
+
+    body.querySelector('#rp-cfg-messages-val').textContent = messages.value;
+    body.querySelector('#rp-cfg-replies-val').textContent = replies.value;
+    paintSlider(messages);
+    paintSlider(replies);
+    body.querySelector('#rp-cfg-estimate').textContent =
+      formatEstimate(Number(messages.value), Number(replies.value));
+  }
+
+  function paintSlider(el) {
+    if (!el) return;
+    const min = Number(el.min);
+    const max = Number(el.max);
+    const pct = ((Number(el.value) - min) / (max - min)) * 100;
+    el.style.backgroundSize = `${pct}% 100%`;
   }
 
   return {
@@ -448,4 +461,22 @@ export function createPanel(shadow, { onClose, onGenerateMore, onInsert, onRetry
     showError,
     showToast,
   };
+}
+
+// ── Small DOM helpers ────────────────────────────────────────────────────────
+
+/**
+ * @param {string} tag
+ * @param {string} [className]
+ * @param {string} [text] assigned as textContent — never parsed as markup
+ */
+function makeEl(tag, className = '', text) {
+  const el = document.createElement(tag);
+  if (className) el.className = className;
+  if (text !== undefined) el.textContent = text;
+  return el;
+}
+
+function percent(progress) {
+  return `${Math.round(progress * 100)}%`;
 }
