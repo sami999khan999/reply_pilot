@@ -13,6 +13,8 @@ import { promptForReplies, promptForMoreReplies, resetSession, hasSession } from
 import { summarizeHistory } from './ai/summarizer.js';
 import { splitBudget, formatRawMessages } from './ai/budget.js';
 import { buildPayload, buildMorePrompt, buildMoreSchema } from './ai/prompts.js';
+import { classify } from './logic/classifier.js';
+import { findRoot } from './logic/rootFinder.js';
 
 // Keep the service worker alive while processing (MV3 workaround)
 let _keepAliveInterval = null;
@@ -87,12 +89,15 @@ async function handleMessage(message) {
 // ── Generate flow ─────────────────────────────────────────────────────────────
 
 /**
- * Full two-pass pipeline: summarize older history + prompt with recent raw.
+ * Full pipeline: classify, find the root message, summarize older history, then
+ * prompt with the recent raw window.
+ *
+ * Classification and root-finding run here rather than in the content script.
+ * They are pure functions over the message array the worker already receives,
+ * and running them on the chat page's main thread bought nothing but jank.
  *
  * @param {{
  *   messages: import('../content/adapters/base.js').Message[],
- *   rootMessage: import('../content/adapters/base.js').Message | null,
- *   ackSamples: string[],
  *   conversationType: 'group' | 'direct',
  *   myName: string,
  *   replyCount?: number,
@@ -102,40 +107,49 @@ async function handleMessage(message) {
  */
 async function handleGenerate({
   messages,
-  rootMessage,
-  ackSamples,
   conversationType,
   myName,
   replyCount = 3,
   referenceNote = '',
   excludeReplies = [],
 }) {
-  // Step 1: Split into raw recent vs. older (summarizable)
+  // Step 1: Heuristics — does this even need a reply, and what is it replying to?
+  const classification = classify(messages, { myName });
+  const { rootMessage, ackSamples } = findRoot(messages);
+
+  // Step 2: Split into raw recent vs. older (summarizable)
   const { rawMessages, olderMessages } = splitBudget(messages, rootMessage);
 
-  // Step 2: Summarize older history
+  // Step 3: Summarize older history
   const olderSummary = await summarizeHistory(olderMessages);
 
-  // Step 3: Format the raw window as text lines
+  // Step 4: Format the raw window as text lines
   const recentRaw = formatRawMessages(rawMessages);
 
-  // Step 4: Build prompt payload
+  // Step 5: Build prompt payload
   const promptPayload = buildPayload({
     conversationType,
     myName,
     olderSummary,
     rootMessageText: rootMessage?.text || '',
-    ackSamples: ackSamples || [],
+    ackSamples,
     recentRaw,
     replyCount,
     referenceNote,
     excludeReplies,
   });
 
-  // Step 5: Prompt the model
+  // Step 6: Prompt the model
   const result = await promptForReplies(promptPayload, { replyCount });
 
-  return result;
+  // The model's needsReply wins when it has an opinion; the heuristic is the
+  // floor, and supplies the confidence the UI grades its wording by.
+  return {
+    ...result,
+    needsReply: result.needsReply ?? classification.needsReply,
+    reason: result.reason || classification.reason,
+    confidence: classification.confidence,
+  };
 }
 
 /**

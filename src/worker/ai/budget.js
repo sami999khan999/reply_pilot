@@ -60,10 +60,13 @@ export function splitBudget(messages, rootMessage) {
   let rawMessages = recentCandidates.slice(cutoff);
   let olderMessages = [...olderCandidates, ...recentCandidates.slice(0, cutoff)];
 
-  // Ensure rootMessage is always in raw (move it if needed)
-  if (rootMessage && !rawMessages.includes(rootMessage)) {
+  // Ensure rootMessage is always in raw (move it if needed).
+  // Match on id, not identity: rootMessage may have been structured-cloned on
+  // its way here, in which case an identity check never matches and the root
+  // gets prepended a second time on every single generate.
+  if (rootMessage && !rawMessages.some(m => m.id === rootMessage.id)) {
     rawMessages = [rootMessage, ...rawMessages];
-    olderMessages = olderMessages.filter(m => m !== rootMessage);
+    olderMessages = olderMessages.filter(m => m.id !== rootMessage.id);
   }
 
   return { rawMessages, olderMessages };

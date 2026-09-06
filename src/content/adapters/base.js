@@ -11,59 +11,9 @@
  * }} Message
  */
 
-/**
- * Generates a stable ID for a message based on sender + timestamp + text content.
- * @param {string} sender
- * @param {number} ts
- * @param {string} text
- * @returns {string}
- */
-export function makeMessageId(sender, ts, text) {
-  const raw = `${sender}|${ts}|${text.slice(0, 40)}`;
-  let hash = 0;
-  for (let i = 0; i < raw.length; i++) {
-    const chr = raw.charCodeAt(i);
-    hash = ((hash << 5) - hash) + chr;
-    hash |= 0;
-  }
-  return String(hash >>> 0);
-}
-
-/**
- * Normalizes whitespace/punctuation for fuzzy-duplicate detection.
- * @param {string} text
- * @returns {string}
- */
-export function normalizeText(text) {
-  return text.trim().replace(/\s+/g, ' ').toLowerCase();
-}
-
-/**
- * Levenshtein-based similarity [0..1] for two short strings.
- * @param {string} a
- * @param {string} b
- * @returns {number}
- */
-export function similarity(a, b) {
-  if (!a || !b) return 0;
-  if (a === b) return 1;
-  const maxLen = Math.max(a.length, b.length);
-  if (maxLen === 0) return 1;
-  const dist = levenshtein(a, b);
-  return 1 - dist / maxLen;
-}
-
-function levenshtein(a, b) {
-  const m = a.length, n = b.length;
-  const dp = Array.from({ length: m + 1 }, (_, i) => Array.from({ length: n + 1 }, (_, j) => i === 0 ? j : j === 0 ? i : 0));
-  for (let i = 1; i <= m; i++) {
-    for (let j = 1; j <= n; j++) {
-      if (a[i - 1] === b[j - 1]) dp[i][j] = dp[i - 1][j - 1];
-      else dp[i][j] = 1 + Math.min(dp[i - 1][j], dp[i][j - 1], dp[i - 1][j - 1]);
-    }
-  }
-  return dp[m][n];
-}
+// Text utilities live in shared/, because the worker needs them too and a
+// service worker has no business importing from the content script.
+export { makeMessageId, normalizeText, similarity } from '../../shared/text.js';
 
 /**
  * Base class all adapters must extend.
