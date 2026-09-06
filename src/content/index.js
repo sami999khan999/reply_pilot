@@ -14,6 +14,7 @@ import { createPanel } from './ui/panel.js';
 import { createOrchestrator } from './orchestrator.js';
 import { createLifecycle } from './lifecycle.js';
 import { createMessageCache } from './logic/messageCache.js';
+import { watchTheme } from './ui/theme.js';
 import { MESSAGE_COUNT_MAX } from '../shared/settings.js';
 
 (function init() {
@@ -23,8 +24,17 @@ import { MESSAGE_COUNT_MAX } from '../shared/settings.js';
   const detected = detect();
   if (!detected) return; // unsupported platform
 
-  const { adapter } = detected;
-  const { shadow } = mountShadowHost();
+  const { adapter, platform } = detected;
+  const { shadow, host } = mountShadowHost();
+
+  // Match the chat app's own colours, and follow it when the user switches
+  // theme. Probes the message list where there is one, since that is the
+  // surface the panel sits beside.
+  const theme = watchTheme({
+    host,
+    accent: platform.accent,
+    probe: () => adapter.getMessageList() || document.body,
+  });
 
   // Banks messages as the host app renders them, so Generate never has to
   // scroll the conversation to find history.
@@ -87,6 +97,8 @@ import { MESSAGE_COUNT_MAX } from '../shared/settings.js';
     onChatStateChange(open) {
       chatOpen = open;
       if (open) {
+        // The chat surface now exists, so it can be measured properly.
+        theme.refresh();
         messageCache.start();
       } else {
         messageCache.stop();
@@ -103,6 +115,7 @@ import { MESSAGE_COUNT_MAX } from '../shared/settings.js';
       // SPA route change — the previous chat's cached elements, per-chat
       // invariants and banked history no longer describe what's on screen.
       adapter.invalidate();
+      theme.refresh();
       messageCache.stop();
       messageCache.reset();
       if (panelOpen) {

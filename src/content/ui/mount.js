@@ -14,7 +14,10 @@ import { PANEL_CSS } from './panel.css.js';
 export function mountShadowHost() {
   const host = document.createElement('div');
   host.id = 'reply-pilot-host';
-  // The host must not affect the page: zero-size, out of flow, no paint of its own.
+  // The host must not affect the page: zero-size, out of flow, no paint of its
+  // own. `all: initial` also stops the page's styles reaching the panel.
+  // ui/theme.js writes the palette here as inline custom properties, which
+  // inherit into the shadow tree and override the stylesheet's :host defaults.
   host.style.cssText = 'all: initial; position: fixed; z-index: 2147483646; top: 0; left: 0; width: 0; height: 0;';
   document.body.appendChild(host);
 
