@@ -114,9 +114,17 @@ export const PANEL_CSS = /* css */`
     inset: -4px;
     border-radius: 50%;
     border: 2px solid var(--rp-amber);
-    animation: rp-pulse 2.6s ease-out infinite;
     opacity: 0;
     pointer-events: none;
+  }
+
+  /* Only animates on hover/focus. This ran as an infinite animation for the
+     lifetime of the tab: .hidden sets opacity to 0, which does not stop it. */
+  @media (prefers-reduced-motion: no-preference) {
+    #rp-fab:hover .rp-fab-pulse,
+    #rp-fab:focus-visible .rp-fab-pulse {
+      animation: rp-pulse 2.6s ease-out infinite;
+    }
   }
 
   @keyframes rp-pulse {
@@ -147,6 +155,9 @@ export const PANEL_CSS = /* css */`
     transition: transform 0.38s cubic-bezier(0.32, 0.72, 0.25, 1);
     overflow: hidden;
     color: var(--rp-text);
+    /* The panel's layout, style and paint are its own business — nothing inside
+       it may force the host page to recalculate. */
+    contain: layout style paint;
   }
 
   #rp-panel.open { transform: translateX(0); }
@@ -227,8 +238,13 @@ export const PANEL_CSS = /* css */`
     border-radius: 50%;
     background: var(--rp-success);
     box-shadow: 0 0 6px var(--rp-success);
-    animation: rp-beacon 2.2s ease-in-out infinite;
     flex-shrink: 0;
+  }
+
+  @media (prefers-reduced-motion: no-preference) {
+    #rp-panel.open .rp-panel-title span::before {
+      animation: rp-beacon 2.2s ease-in-out infinite;
+    }
   }
 
   @keyframes rp-beacon {
@@ -333,7 +349,10 @@ export const PANEL_CSS = /* css */`
     inset: 1px;
     border-radius: 50%;
     background: conic-gradient(from 0deg, rgba(45, 212, 191, 0.55), rgba(45, 212, 191, 0.08) 70deg, transparent 90deg);
-    animation: rp-sweep 1.8s linear infinite;
+  }
+
+  @media (prefers-reduced-motion: no-preference) {
+    .rp-radar::after { animation: rp-sweep 1.8s linear infinite; }
   }
 
   @keyframes rp-sweep {
@@ -350,7 +369,10 @@ export const PANEL_CSS = /* css */`
     border-radius: 50%;
     background: var(--rp-radar);
     box-shadow: 0 0 8px var(--rp-radar);
-    animation: rp-blip 1.8s ease-out infinite;
+  }
+
+  @media (prefers-reduced-motion: no-preference) {
+    .rp-radar-blip { animation: rp-blip 1.8s ease-out infinite; }
   }
 
   @keyframes rp-blip {
@@ -411,7 +433,10 @@ export const PANEL_CSS = /* css */`
     background: linear-gradient(90deg, var(--rp-amber), var(--rp-amber-2));
     border-radius: 3px;
     transition: width 0.3s ease;
-    animation: rp-progress-pulse 1.5s ease-in-out infinite alternate;
+  }
+
+  @media (prefers-reduced-motion: no-preference) {
+    .rp-progress-fill { animation: rp-progress-pulse 1.5s ease-in-out infinite alternate; }
   }
 
   @keyframes rp-progress-pulse {

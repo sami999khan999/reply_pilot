@@ -210,5 +210,13 @@ export function createOrchestrator({ adapter, panel }) {
     }
   }
 
-  return { openConfig, onGenerate, onGenerateMore, onInsert };
+  /**
+   * Abandons whatever is in flight. Called when the panel closes or the chat
+   * changes underneath us. Fleshed out once the worker learns to abort.
+   */
+  function onCancel() {
+    // no-op for now
+  }
+
+  return { openConfig, onGenerate, onGenerateMore, onInsert, onCancel };
 }

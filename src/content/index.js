@@ -1,11 +1,10 @@
 /**
  * index.js — Content script entry point.
  *
- * 1. Detects the platform (WhatsApp / Messenger).
- * 2. Mounts the Shadow DOM host.
- * 3. Creates FAB + panel.
- * 4. Wires the orchestrator.
- * 5. Polls for chat-open state to show/hide the FAB.
+ * Mounts the Shadow DOM host and the FAB, then hands all recurring work to
+ * `lifecycle.js`. Everything past the FAB — the panel, the orchestrator — is
+ * built on first open, so a tab where the user never clicks the button pays for
+ * one small button and one 1.5s timer that stops when the tab is backgrounded.
  */
 
 import { detect } from './detector.js';
@@ -13,6 +12,7 @@ import { mountShadowHost } from './ui/mount.js';
 import { createFAB } from './ui/fab.js';
 import { createPanel } from './ui/panel.js';
 import { createOrchestrator } from './orchestrator.js';
+import { createLifecycle } from './lifecycle.js';
 
 (function init() {
   // Don't double-inject
@@ -22,82 +22,86 @@ import { createOrchestrator } from './orchestrator.js';
   if (!detected) return; // unsupported platform
 
   const { adapter } = detected;
-
-  // Mount Shadow DOM
   const { shadow } = mountShadowHost();
 
-  // Create panel first (so orchestrator can reference it)
   let panelOpen = false;
+  let chatOpen = false;
 
-  // FAB is shown only when a chat is open AND the panel is closed — the panel's
-  // own header has a close button, so the FAB never overlaps the open panel.
-  function updateFabVisibility() {
-    let chatOpen = false;
-    try { chatOpen = adapter.isChatOpen(); } catch { /* DOM not ready */ }
-    fabCtrl.setVisible(chatOpen && !panelOpen);
-  }
+  // ── Lazily built on first open ─────────────────────────────────────────────
+  /** @type {ReturnType<typeof createPanel>|null} */
+  let panel = null;
+  /** @type {ReturnType<typeof createOrchestrator>|null} */
+  let orchestrator = null;
 
-  const panelCtrl = createPanel(shadow, {
-    onClose() {
-      panelOpen = false;
-      updateFabVisibility();
-    },
-    onGenerateMore() {
-      return orchestrator.onGenerateMore();
-    },
-    onInsert(text) {
-      orchestrator.onInsert(text);
-    },
-    onRetry() {
-      panelOpen = true;
-      updateFabVisibility();
-      orchestrator.onGenerate();
-    },
-  });
+  function ensureUI() {
+    if (panel) return { panel, orchestrator };
 
-  // Create orchestrator
-  const orchestrator = createOrchestrator({ adapter, panel: panelCtrl });
-
-  // Create FAB — opens the panel's launch/config screen (no auto-generate)
-  const fabCtrl = createFAB(shadow, {
-    onClick() {
-      if (panelOpen) return; // FAB is hidden while open, but guard anyway
-      panelOpen = true;
-      updateFabVisibility();
-      orchestrator.openConfig();
-    },
-  });
-
-  // Poll for chat-open state every 2s — show/hide FAB accordingly
-  fabCtrl.setVisible(false); // start hidden
-  const CHECK_INTERVAL = 2000;
-
-  function checkChatOpen() {
-    try {
-      const open = adapter.isChatOpen();
-      if (!open && panelOpen) {
-        panelCtrl.close();
+    panel = createPanel(shadow, {
+      onClose() {
         panelOpen = false;
-      }
-    } catch {
-      // DOM may not be ready yet — ignore
-    }
-    updateFabVisibility();
+        orchestrator?.onCancel();
+        syncFab();
+      },
+      onGenerateMore() {
+        return orchestrator.onGenerateMore();
+      },
+      onInsert(text) {
+        orchestrator.onInsert(text);
+      },
+      onRetry() {
+        panelOpen = true;
+        syncFab();
+        orchestrator.onGenerate();
+      },
+    });
+
+    orchestrator = createOrchestrator({ adapter, panel });
+    return { panel, orchestrator };
   }
 
-  // Initial check after a short delay to let the app render
-  setTimeout(checkChatOpen, 1500);
-  setInterval(checkChatOpen, CHECK_INTERVAL);
+  /** The FAB shows only when a chat is open and the panel is closed. */
+  function syncFab() {
+    fab.setVisible(chatOpen && !panelOpen);
+  }
 
-  // Also check on URL change (SPA navigation)
-  let lastUrl = location.href;
-  new MutationObserver(() => {
-    if (location.href !== lastUrl) {
-      lastUrl = location.href;
-      panelCtrl.close();
-      panelOpen = false;
-      setTimeout(checkChatOpen, 1500);
-    }
-  }).observe(document.body, { childList: true, subtree: true });
+  const fab = createFAB(shadow, {
+    onClick() {
+      if (panelOpen) return; // hidden while open, but guard anyway
+      panelOpen = true;
+      syncFab();
+      ensureUI().orchestrator.openConfig();
+    },
+  });
+  fab.setVisible(false);
 
+  // ── Recurring work: one visibility-gated ticker, no DOM observers ──────────
+  createLifecycle({
+    isChatOpen: () => adapter.isChatOpen(),
+
+    onChatStateChange(open) {
+      chatOpen = open;
+      if (!open && panelOpen) {
+        panel?.close();
+        panelOpen = false;
+        orchestrator?.onCancel();
+      }
+      syncFab();
+      adapter.onChatStateChange?.(open);
+    },
+
+    onNavigate() {
+      // SPA route change — the previous chat's cached elements and per-chat
+      // invariants no longer describe what's on screen.
+      adapter.invalidate?.();
+      if (panelOpen) {
+        panel?.close();
+        panelOpen = false;
+        orchestrator?.onCancel();
+      }
+    },
+
+    onVisibilityChange(visible) {
+      adapter.onVisibilityChange?.(visible);
+    },
+  });
 })();
