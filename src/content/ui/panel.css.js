@@ -461,6 +461,19 @@ export const PANEL_CSS = /* css */`
   }
 
   /* Summary block — the "briefing" */
+  /* Shown when the chat had less rendered history than the user asked for.
+     We report the shortfall rather than scrolling the conversation to fix it. */
+  .rp-history-note {
+    margin: 10px 0 0;
+    padding: 8px 10px;
+    border-left: 2px solid var(--rp-warn);
+    background: rgba(251, 191, 36, 0.07);
+    border-radius: 0 var(--rp-radius-sm) var(--rp-radius-sm) 0;
+    color: var(--rp-muted);
+    font-size: 12px;
+    line-height: 1.5;
+  }
+
   .rp-summary-block {
     background: rgba(17, 26, 48, 0.85);
     border: 1px solid var(--rp-border);
