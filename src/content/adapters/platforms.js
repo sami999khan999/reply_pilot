@@ -109,7 +109,10 @@ export const PLATFORMS = [
     text: ['span.selectable-text'],
     quote: ['[data-testid="quoted-message"]', '.quoted-mention'],
     title: ['span[title]'],
-    direction: ['class'],
+    // WhatsApp churns class names; its bubbles are genuinely left/right
+    // aligned, so align is a real second chance rather than a guess. Without it,
+    // a renamed marker makes every message — your own included — read as theirs.
+    direction: ['class', 'align'],
     directionClass: { out: ['message-out'], in: ['message-in'] },
     myName: ['[data-testid="menu-bar-profile"] img'],
     // Sender, timestamp and direction all come out of data-pre-plain-text,

@@ -85,23 +85,37 @@ export function findAncestorToken(el, tokens, maxDepth = 6) {
 }
 
 /**
- * Reads left/right alignment for many rows in a single batch.
+ * Decides which of `elements` hug the right-hand edge of `container`, reading
+ * every rect in a single batch.
  *
- * Rect reads are only expensive when they are interleaved with writes: the first
- * read flushes layout and every read after it is served from that same layout,
- * as long as nothing invalidates it in between. Callers must therefore do all
- * their DOM writing outside this function.
+ * Chat apps lay out a full-width message list and push outgoing bubbles to its
+ * right edge, so the message is measured against the list rather than against
+ * its own row — a row that wraps the bubble tightly carries no signal, and on
+ * WhatsApp the scraped element *is* its own row.
  *
- * @param {{ row: Element, textEl: Element }[]} pairs
- * @returns {boolean[]} true where the text sits in the right-hand 60% of its row
+ * Comparing edge distances rather than centres keeps this right for bubbles
+ * wide enough to cross the midpoint.
+ *
+ * Rect reads are only expensive when interleaved with writes: the first flushes
+ * layout and the rest are served from it, so callers must do no DOM writing
+ * while this runs.
+ *
+ * @param {ArrayLike<Element>} elements
+ * @param {Element} container
+ * @returns {boolean[]}
  */
-export function batchedRightAligned(pairs) {
-  const out = new Array(pairs.length);
-  for (let i = 0; i < pairs.length; i++) {
-    const rowRect = pairs[i].row.getBoundingClientRect();
-    const textRect = pairs[i].textEl.getBoundingClientRect();
-    out[i] = rowRect.width > 0 && textRect.left > rowRect.left + rowRect.width * 0.4;
+export function batchedRightAligned(elements, container) {
+  const bounds = container.getBoundingClientRect();
+  const out = new Array(elements.length);
+
+  for (let i = 0; i < elements.length; i++) {
+    const rect = elements[i].getBoundingClientRect();
+    const gapLeft = rect.left - bounds.left;
+    const gapRight = bounds.right - rect.right;
+    // A bubble that fills the width sits at neither edge; treat it as incoming.
+    out[i] = rect.width > 0 && gapRight < gapLeft;
   }
+
   return out;
 }
 

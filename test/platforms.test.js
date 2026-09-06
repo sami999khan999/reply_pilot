@@ -137,6 +137,17 @@ test('an unsupported site is not detected at all', async () => {
   assert.equal(detected, false);
 });
 
+test('a message is never paired with its own wrapper row', async () => {
+  // WhatsApp wraps every message in div[role="row"], which is also one of the
+  // structural fallbacks. Pooling the two selectors matched both and walked
+  // twice the nodes; on other platforms it can yield the same message twice.
+  const result = await scrape('whatsapp');
+
+  const texts = result.messages.map(m => m.text);
+  assert.equal(new Set(texts).size, texts.length, 'no duplicated messages');
+  assert.equal(result.messages.length, 3);
+});
+
 test('a redesign falls through to structural detection rather than breaking', async () => {
   // The `redesigned` fixture is Telegram's URL with none of Telegram's markup.
   // Every selector slot has to degrade to the ARIA-based fallback.
