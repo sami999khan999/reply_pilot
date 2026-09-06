@@ -48,7 +48,6 @@ export function createMessageCache({ adapter, capacity }) {
 
   let idleHandle = null;
   let timerHandle = null;
-  let paused = false;
 
   /**
    * Only platforms with a real per-message timestamp can have separate scrapes
@@ -84,7 +83,7 @@ export function createMessageCache({ adapter, capacity }) {
 
   function harvest() {
     idleHandle = null;
-    if (paused || !mergeable) return;
+    if (!mergeable) return;
 
     try {
       syncSignature();
@@ -133,10 +132,6 @@ export function createMessageCache({ adapter, capacity }) {
     if (timerHandle !== null) { clearTimeout(timerHandle); timerHandle = null; }
   }
 
-  /** Stops harvesting without losing what is banked (used during generation). */
-  function pause() { paused = true; }
-  function resume() { paused = false; }
-
   function reset() {
     store.clear();
     signature = null;
@@ -176,7 +171,7 @@ export function createMessageCache({ adapter, capacity }) {
     };
   }
 
-  return { start, stop, pause, resume, reset, read, get size() { return store.size; } };
+  return { start, stop, reset, read, get size() { return store.size; } };
 }
 
 /**

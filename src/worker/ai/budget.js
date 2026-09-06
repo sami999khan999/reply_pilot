@@ -88,3 +88,27 @@ export function formatRawMessages(msgs) {
     return `${tag}${quote}: ${m.text}`;
   }).join('\n');
 }
+
+/**
+ * Trims a summary to its share of the context window.
+ *
+ * The summarizer normally returns a couple of sentences, but nothing guaranteed
+ * it: MAX_SUMMARY_TOKENS was declared and never used, so a long summary — or the
+ * raw-transcript fallback used when the Summarizer API is unavailable — could
+ * crowd out the recent messages it is meant to give context for.
+ *
+ * @param {string} summary
+ * @returns {string}
+ */
+export function capSummary(summary) {
+  if (!summary) return '';
+
+  const limit = MAX_SUMMARY_TOKENS * CHARS_PER_TOKEN;
+  if (summary.length <= limit) return summary;
+
+  // Cut at a sentence end where there is one nearby, so the summary still reads
+  // as prose rather than stopping mid-word.
+  const clipped = summary.slice(0, limit);
+  const lastStop = clipped.lastIndexOf('. ');
+  return (lastStop > limit * 0.6 ? clipped.slice(0, lastStop + 1) : clipped.trimEnd()) + '…';
+}

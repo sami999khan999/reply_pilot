@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { splitBudget, formatRawMessages, estimateTokens } from '../src/worker/ai/budget.js';
+import { splitBudget, formatRawMessages, estimateTokens, capSummary } from '../src/worker/ai/budget.js';
 
 const msg = (id, text, extra = {}) => ({
   id,
@@ -78,4 +78,33 @@ test('formatRawMessages tags direction and quotes', () => {
 test('estimateTokens handles empty input', () => {
   assert.equal(estimateTokens(''), 0);
   assert.equal(estimateTokens(undefined), 0);
+});
+
+test('capSummary leaves a normal summary alone', () => {
+  const summary = 'Rafi asked about the meeting time. You said four works.';
+  assert.equal(capSummary(summary), summary);
+});
+
+test('capSummary handles empty input', () => {
+  assert.equal(capSummary(''), '');
+  assert.equal(capSummary(undefined), '');
+});
+
+test('capSummary bounds a runaway summary', () => {
+  // The constant existed but was never applied, so the raw-transcript fallback
+  // used when the Summarizer API is unavailable could crowd out the recent
+  // messages the summary is meant to give context for.
+  const long = 'x'.repeat(10_000);
+  const capped = capSummary(long);
+
+  assert.ok(capped.length < long.length);
+  assert.ok(capped.length <= 400 * 4 + 1, `capped to ${capped.length} chars`);
+  assert.ok(capped.endsWith('\u2026'), 'marked as truncated');
+});
+
+test('capSummary prefers to cut at a sentence end', () => {
+  const sentence = 'This is a complete sentence that ends here. ';
+  const capped = capSummary(sentence.repeat(60));
+
+  assert.ok(capped.endsWith('here.\u2026'), `cut mid-sentence: ${capped.slice(-40)}`);
 });

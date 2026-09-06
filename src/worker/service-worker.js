@@ -12,7 +12,7 @@
 import { checkLanguageModelAvailability, checkSummarizerAvailability } from './ai/availability.js';
 import { promptForReplies, promptForMoreReplies, resetSession, hasSession } from './ai/promptSession.js';
 import { summarizeHistory } from './ai/summarizer.js';
-import { splitBudget, formatRawMessages } from './ai/budget.js';
+import { splitBudget, formatRawMessages, capSummary } from './ai/budget.js';
 import { buildPayload, buildMorePrompt, buildMoreSchema } from './ai/prompts.js';
 import { classify } from './logic/classifier.js';
 import { findRoot } from './logic/rootFinder.js';
@@ -98,9 +98,9 @@ async function handleMessage(message) {
 
     case 'GENERATE_MORE':
       return withRequest(message.payload, async (payload, signal) => {
-        const replies = await handleGenerateMore(payload, signal);
-        if (replies === CONTEXT_LOST) return { ok: false, code: CONTEXT_LOST };
-        return { ok: true, replies };
+        const result = await handleGenerateMore(payload, signal);
+        if (result === CONTEXT_LOST) return { ok: false, code: CONTEXT_LOST };
+        return { ok: true, ...result };
       });
 
     case 'ABORT': {
@@ -183,7 +183,7 @@ async function handleGenerate({
   const { rawMessages, olderMessages } = splitBudget(messages, rootMessage);
 
   // Step 3: Summarize older history
-  const olderSummary = await summarizeHistory(olderMessages, { signal });
+  const olderSummary = capSummary(await summarizeHistory(olderMessages, { signal }));
 
   // Step 4: Format the raw window as text lines
   const recentRaw = formatRawMessages(rawMessages);
@@ -228,16 +228,22 @@ async function handleGenerate({
  *   context?: object,
  * }} payload
  * @param {AbortSignal} [signal]
- * @returns {Promise<string[] | typeof CONTEXT_LOST>}
+ * @returns {Promise<{ replies: string[], contextId?: string } | typeof CONTEXT_LOST>}
  */
 async function handleGenerateMore({
+  requestId,
   contextId,
   replyCount = 3,
   referenceNote = '',
   previousReplies = [],
   context,
 }, signal) {
-  if (hasSession()) {
+  // The warm session belongs to one conversation. Continuing it for a different
+  // one would answer with the wrong chat's context, so the handle has to match
+  // what the session was built for.
+  const sessionServesThisChat = _context !== null && _context.id === contextId;
+
+  if (sessionServesThisChat && hasSession()) {
     try {
       const replies = await promptForMoreReplies(
         buildMorePrompt(replyCount, referenceNote),
@@ -245,7 +251,7 @@ async function handleGenerateMore({
         replyCount,
         { signal },
       );
-      if (replies.length > 0) return replies;
+      if (replies.length > 0) return { replies, contextId };
     } catch (err) {
       if (isAbort(err)) throw err;
       // Otherwise fall through and rebuild.
@@ -266,5 +272,15 @@ async function handleGenerateMore({
     excludeReplies: previousReplies,
   }, signal);
 
-  return result.replies || [];
+  // Retain what we just rebuilt from under a handle of its own. Without this the
+  // worker held nothing after a restart, so every later "generate more" resent
+  // the whole conversation rather than only the first one after the restart.
+  _context = {
+    id: requestId,
+    messages: rebuildFrom.messages,
+    conversationType: rebuildFrom.conversationType,
+    myName: rebuildFrom.myName,
+  };
+
+  return { replies: result.replies || [], contextId: requestId };
 }
