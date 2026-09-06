@@ -20,6 +20,13 @@ export function createOrchestrator({ adapter, panel, messageCache }) {
   // the (MV3) service worker was terminated and lost its warm session.
   let lastGenerate = null;   // { messages, conversationType, myName, replyCount, referenceNote }
   let shownReplies = [];     // every reply option shown so far (to avoid repeats)
+  let contextId = null;      // handle the worker holds this conversation under
+  let inFlight = null;       // requestId of the request currently running, if any
+
+  /** A new id per request, so the worker can be told to abandon one by name. */
+  function nextRequestId() {
+    return (crypto.randomUUID?.() ?? `rp-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+  }
 
   /**
    * Opens the panel to its launch/config screen (no generation yet).
@@ -33,16 +40,22 @@ export function createOrchestrator({ adapter, panel, messageCache }) {
     });
   }
 
-  /** Sends a message to the service worker and returns its response. */
-  async function workerMessage(type, payload = {}) {
+  /**
+   * Sends a message to the service worker and returns its response.
+   * @param {string} type
+   * @param {object} [payload]
+   * @param {{ allowFailure?: boolean }} [opts] resolve rather than throw on a
+   *   structured failure, so the caller can act on `code`
+   */
+  async function workerMessage(type, payload = {}, opts = {}) {
     return new Promise((resolve, reject) => {
       chrome.runtime.sendMessage({ type, payload }, response => {
         if (chrome.runtime.lastError) {
           reject(new Error(chrome.runtime.lastError.message));
-        } else if (!response?.ok) {
-          reject(new Error(response?.error || 'Worker returned error'));
-        } else {
+        } else if (response?.ok || opts.allowFailure) {
           resolve(response);
+        } else {
+          reject(new Error(response?.error || 'Worker returned error'));
         }
       });
     });
@@ -59,8 +72,16 @@ export function createOrchestrator({ adapter, panel, messageCache }) {
    * @param {{ messageCount?: number, replyCount?: number, referenceNote?: string, ignoreClassification?: boolean }} [params]
    */
   async function onGenerate(params = {}) {
+    onCancel(); // supersede anything still running
+
+    const requestId = nextRequestId();
+    inFlight = requestId;
+
     panel.open();
     panel.showLoading('Scanning the conversation…');
+
+    /** True once this request has been superseded or cancelled. */
+    const stale = () => inFlight !== requestId;
 
     try {
       // Resolve settings: explicit params (from the config screen) win, else
@@ -73,6 +94,7 @@ export function createOrchestrator({ adapter, panel, messageCache }) {
 
       // ── 1. Check AI availability ─────────────────────────────────────────
       const avail = await checkAvailability();
+      if (stale()) return;
 
       if (avail.languageModel === 'no') {
         panel.showError(
@@ -136,13 +158,16 @@ export function createOrchestrator({ adapter, panel, messageCache }) {
       shownReplies = [];
 
       const result = await workerMessage('GENERATE', {
+        requestId,
         messages,
         conversationType,
         myName,
         replyCount,
         referenceNote,
       });
+      if (stale()) return;
 
+      contextId = result.contextId;
       shownReplies = [...(result.replies || [])];
 
       // ── 4. Render results ────────────────────────────────────────────────
@@ -158,6 +183,8 @@ export function createOrchestrator({ adapter, panel, messageCache }) {
       });
 
     } catch (err) {
+      if (stale()) return; // we asked for this — not an error to report
+
       console.error('[ReplyPilot] orchestrator error:', err);
 
       if (err.message?.includes('download')) {
@@ -165,6 +192,8 @@ export function createOrchestrator({ adapter, panel, messageCache }) {
       } else {
         panel.showError('Generation failed', err.message || 'Unexpected error. Please try again.');
       }
+    } finally {
+      if (inFlight === requestId) inFlight = null;
     }
   }
 
@@ -177,23 +206,49 @@ export function createOrchestrator({ adapter, panel, messageCache }) {
       panel.showToast('Generate replies first.');
       return;
     }
+    const requestId = nextRequestId();
+    inFlight = requestId;
+
     try {
-      const result = await workerMessage('GENERATE_MORE', {
+      // The worker normally still holds the conversation under `contextId`, so
+      // the common case sends a handle rather than the whole thread again.
+      let result = await workerMessage('GENERATE_MORE', {
+        requestId,
+        contextId,
         replyCount: lastGenerate.replyCount,
         referenceNote: lastGenerate.referenceNote,
         previousReplies: shownReplies,
-        context: {
-          messages: lastGenerate.messages,
-          conversationType: lastGenerate.conversationType,
-          myName: lastGenerate.myName,
-        },
-      });
+      }, { allowFailure: true });
+
+      // Only when the worker was torn down between clicks does the full context
+      // need to cross again.
+      if (result?.code === 'CONTEXT_LOST') {
+        result = await workerMessage('GENERATE_MORE', {
+          requestId,
+          replyCount: lastGenerate.replyCount,
+          referenceNote: lastGenerate.referenceNote,
+          previousReplies: shownReplies,
+          context: {
+            messages: lastGenerate.messages,
+            conversationType: lastGenerate.conversationType,
+            myName: lastGenerate.myName,
+          },
+        });
+      } else if (!result?.ok) {
+        throw new Error(result?.error || 'Worker returned error');
+      }
+
+      if (inFlight !== requestId) return;
+
       const replies = result.replies || [];
       shownReplies = [...shownReplies, ...replies];
       panel.appendReplies(replies);
     } catch (err) {
+      if (inFlight !== requestId) return;
       console.error('[ReplyPilot] generateMore error:', err);
       panel.showToast('Failed to generate more — try reopening the panel.');
+    } finally {
+      if (inFlight === requestId) inFlight = null;
     }
   }
 
@@ -212,11 +267,19 @@ export function createOrchestrator({ adapter, panel, messageCache }) {
   }
 
   /**
-   * Abandons whatever is in flight. Called when the panel closes or the chat
-   * changes underneath us. Fleshed out once the worker learns to abort.
+   * Abandons whatever is in flight. Called when the panel closes, when the chat
+   * changes underneath us, and before starting a fresh generate.
+   *
+   * Previously a closed panel left the model running and the worker's keep-alive
+   * ticking until it finished.
    */
   function onCancel() {
-    // no-op for now
+    if (inFlight === null) return;
+    const requestId = inFlight;
+    inFlight = null;
+    workerMessage('ABORT', { requestId }, { allowFailure: true }).catch(() => {
+      // The worker may already be gone; the request dies with it either way.
+    });
   }
 
   return { openConfig, onGenerate, onGenerateMore, onInsert, onCancel };

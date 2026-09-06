@@ -36,9 +36,10 @@ async function getSummarizer() {
  * Falls back to a truncated string if the Summarizer API is unavailable.
  *
  * @param {import('../../content/adapters/base.js').Message[]} messages
+ * @param {{ signal?: AbortSignal }} [opts]
  * @returns {Promise<string>}
  */
-export async function summarizeHistory(messages) {
+export async function summarizeHistory(messages, opts = {}) {
   if (!messages || messages.length === 0) return '';
 
   const transcript = messages
@@ -57,9 +58,11 @@ export async function summarizeHistory(messages) {
   }
 
   try {
-    const result = await summarizer.summarize(transcript);
+    const result = await summarizer.summarize(transcript, { signal: opts.signal });
     return result || '';
   } catch (err) {
+    // An abort is the caller's decision — don't paper over it with a fallback.
+    if (err instanceof Error && err.name === 'AbortError') throw err;
     console.warn('[ReplyPilot] summarize() failed:', err);
     return transcript.slice(0, 300);
   }
