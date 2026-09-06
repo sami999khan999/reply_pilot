@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildTokens } from '../src/content/ui/theme.js';
+import { buildTokens, applyTheme } from '../src/content/ui/theme.js';
 import { parseColor, contrastRatio, MIN_TEXT_CONTRAST } from '../src/shared/color.js';
 
 /** The real background/text/accent triples of the apps we support. */
@@ -108,4 +108,31 @@ test('every token is a value CSS can actually use', () => {
       }
     }
   }
+});
+
+test('re-applying an unchanged palette writes nothing', () => {
+  // Writing a custom property invalidates style for the whole shadow tree, and
+  // <html> class churn (scroll state, open modals) schedules refreshes
+  // constantly — so an unchanged palette has to be free.
+  const writes = [];
+  const host = { style: { setProperty: (n, v) => writes.push(n) }, dataset: {} };
+  const tokens = tokensFor(SURFACES[0]);
+
+  assert.equal(applyTheme(host, tokens), true, 'the first application writes');
+  const initial = writes.length;
+  assert.ok(initial > 0);
+
+  assert.equal(applyTheme(host, tokens), false, 'the second is a no-op');
+  assert.equal(writes.length, initial, 'and performs no writes at all');
+});
+
+test('a changed palette is applied', () => {
+  const writes = [];
+  const host = { style: { setProperty: (n) => writes.push(n) }, dataset: {} };
+
+  applyTheme(host, tokensFor(SURFACES[0]));
+  writes.length = 0;
+
+  assert.equal(applyTheme(host, tokensFor(SURFACES[2])), true, 'a real theme switch is applied');
+  assert.ok(writes.includes('--rp-bg'));
 });
