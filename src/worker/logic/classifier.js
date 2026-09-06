@@ -1,3 +1,5 @@
+import { normalizeText, similarity } from '../../shared/text.js';
+
 /**
  * classifier.js
  * Pure-JS heuristics that decide whether a reply is needed.
@@ -17,16 +19,14 @@ export function classify(messages, { myName = 'Me' } = {}) {
 
   // Rule 1: Direct question / @mention / reply-quote to my message → highest priority
   const recentFromOthers = messages.filter(m => !m.isMe).slice(-5);
-  const addressedToMe = recentFromOthers.some(m => {
-    const txt = m.text.toLowerCase();
-    const nameLower = myName.toLowerCase();
-    return (
-      m.mentionsMe ||
-      m.quotedText?.includes('Me') ||
-      (nameLower !== 'me' && txt.includes(nameLower)) ||
-      txt.includes('?') // a question was asked
-    );
-  });
+  const myTexts = messages.filter(m => m.isMe).map(m => normalizeText(m.text));
+
+  const addressedToMe = recentFromOthers.some(m => (
+    m.mentionsMe ||
+    quotesMe(m.quotedText, myTexts) ||
+    namesMe(m.text, myName) ||
+    m.text.includes('?') // a question was asked
+  ));
 
   if (addressedToMe) {
     return {
@@ -66,9 +66,7 @@ export function classify(messages, { myName = 'Me' } = {}) {
   // Sub-rule 4a: strictly others talking, no mention/quote of me, no broadcast pattern
   const myMessages = messages.filter(m => m.isMe);
   const hasIBeenMentioned = messages.some(m => m.mentionsMe);
-  const hasIBeenQuoted = messages.some(m =>
-    m.quotedText && (m.quotedText.toLowerCase().includes(myName.toLowerCase()))
-  );
+  const hasIBeenQuoted = messages.some(m => quotesMe(m.quotedText, myTexts));
 
   if (!hasIBeenMentioned && !hasIBeenQuoted && myMessages.length === 0) {
     // Check if this looks like a broadcast (many short acks from different senders)
@@ -97,4 +95,64 @@ export function classify(messages, { myName = 'Me' } = {}) {
     confidence: 'medium',
     reason: 'Group message that may include you.',
   };
+}
+
+// ── Helpers ──────────────────────────────────────────────────────────────────
+
+/** A quote has to resemble one of my messages this closely to count as mine. */
+const QUOTE_MATCH_THRESHOLD = 0.7;
+
+/**
+ * Whether a quoted block is quoting something the user actually said.
+ *
+ * This used to be `quotedText.includes('Me')` — a case-sensitive substring, so
+ * it matched *Me*eting, *Me*ssage, *Me*mber and *Me*et. Since rule 1
+ * short-circuits everything after it, any quoted mention of a meeting made the
+ * whole conversation read as directly addressing the user.
+ *
+ * The quote is compared against what the user actually wrote instead. Quotes are
+ * usually truncated with an ellipsis, so a fuzzy match is the right instrument.
+ *
+ * @param {string|undefined} quotedText
+ * @param {string[]} myTexts normalized text of the user's own messages
+ */
+function quotesMe(quotedText, myTexts) {
+  if (!quotedText || myTexts.length === 0) return false;
+
+  const quoted = normalizeText(quotedText);
+  if (quoted.length === 0) return false;
+
+  return myTexts.some(mine => mine.startsWith(quoted) || similarity(quoted, mine) > QUOTE_MATCH_THRESHOLD);
+}
+
+/**
+ * Whether a message addresses the user by name.
+ *
+ * Matched on word boundaries: a plain substring test meant a user called "Sam"
+ * was addressed by the word "sample".
+ *
+ * @param {string} text
+ * @param {string} myName
+ */
+function namesMe(text, myName) {
+  const name = (myName || '').trim();
+  if (name.length < 2 || name.toLowerCase() === 'me') return false;
+
+  return wordBoundaryPattern(name).test(text);
+}
+
+/** Cache: the same name is tested against every recent message. */
+const PATTERN_CACHE = new Map();
+
+/** @param {string} name */
+function wordBoundaryPattern(name) {
+  let pattern = PATTERN_CACHE.get(name);
+  if (pattern === undefined) {
+    // A display name can hold regex metacharacters, so escape before compiling.
+    const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    pattern = new RegExp(`(^|[^\\p{L}\\p{N}])${escaped}($|[^\\p{L}\\p{N}])`, 'iu');
+    if (PATTERN_CACHE.size > 32) PATTERN_CACHE.clear();
+    PATTERN_CACHE.set(name, pattern);
+  }
+  return pattern;
 }

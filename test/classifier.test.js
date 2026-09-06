@@ -87,6 +87,58 @@ test('a group I have taken part in needs a reply', () => {
   assert.equal(result.confidence, 'medium');
 });
 
+test('a quoted mention of a meeting is not read as quoting you', () => {
+  // "Meeting" contains "Me". The old substring test made rule 1 — which
+  // short-circuits everything after it — fire on ordinary vocabulary.
+  const messages = [
+    msg('Me', 'i will bring the slides'),
+    msg('Rafi', 'sounds good', { quotedText: 'Can we move the Meeting to four' }),
+  ];
+  const result = classify(messages, { myName: 'Sami' });
+  assert.doesNotMatch(result.reason, /directly addressed/);
+});
+
+test('a quote of something you actually said is recognised', () => {
+  const messages = [
+    msg('Me', 'i will bring the slides and the projector'),
+    msg('Rafi', 'thanks', { quotedText: 'i will bring the slides and the projector' }),
+  ];
+  const result = classify(messages, { myName: 'Sami' });
+  assert.equal(result.needsReply, true);
+  assert.match(result.reason, /directly addressed/);
+});
+
+test('a truncated quote of your message still counts', () => {
+  // Chat apps clip quoted text, so the match has to tolerate a prefix.
+  const messages = [
+    msg('Me', 'the deploy finished and everything looks green on the dashboard'),
+    msg('Rafi', 'nice', { quotedText: 'the deploy finished and everything' }),
+  ];
+  assert.match(classify(messages, { myName: 'Sami' }).reason, /directly addressed/);
+});
+
+test('your name is matched on word boundaries, not as a substring', () => {
+  // A user called "Sam" was addressed by the word "sample".
+  const notAddressed = classify([msg('Rafi', 'here is a sample of the report')], { myName: 'Sam' });
+  assert.doesNotMatch(notAddressed.reason, /directly addressed/);
+
+  const addressed = classify([msg('Rafi', 'Sam can you take this one')], { myName: 'Sam' });
+  assert.match(addressed.reason, /directly addressed/);
+});
+
+test('a name is matched regardless of case and adjacent punctuation', () => {
+  for (const text of ['sami, can you look', 'Hey SAMI!', '(sami) please review']) {
+    assert.match(classify([msg('Rafi', text)], { myName: 'Sami' }).reason, /directly addressed/, text);
+  }
+});
+
+test('a name containing regex metacharacters does not break matching', () => {
+  const result = classify([msg('Rafi', 'ping for a.b')], { myName: 'a.b' });
+  assert.match(result.reason, /directly addressed/);
+  // And the dot is a literal, not a wildcard.
+  assert.doesNotMatch(classify([msg('Rafi', 'ping for axb')], { myName: 'a.b' }).reason, /directly addressed/);
+});
+
 test('a name of "Me" is not matched against message text', () => {
   // Otherwise any message containing "me" would read as addressing the user.
   const result = classify([msg('Rafi', 'let me think about it')], { myName: 'Me' });
