@@ -25,6 +25,9 @@ export function queryFirst(selectors, root = document) {
   return null;
 }
 
+/** Shared empty result, so callers never allocate for a miss. */
+const EMPTY = Object.freeze([]);
+
 /**
  * Returns the matches of the first selector that finds anything.
  *
@@ -46,9 +49,6 @@ export function queryAllFirst(selectors, root = document) {
   }
   return EMPTY;
 }
-
-/** Shared empty result, so callers never allocate for a miss. */
-const EMPTY = Object.freeze([]);
 
 /**
  * Wraps a finder so its result is cached until the element is detached.

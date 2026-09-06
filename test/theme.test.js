@@ -115,7 +115,7 @@ test('re-applying an unchanged palette writes nothing', () => {
   // <html> class churn (scroll state, open modals) schedules refreshes
   // constantly — so an unchanged palette has to be free.
   const writes = [];
-  const host = { style: { setProperty: (n, v) => writes.push(n) }, dataset: {} };
+  const host = { style: { setProperty: (n) => writes.push(n) } };
   const tokens = tokensFor(SURFACES[0]);
 
   assert.equal(applyTheme(host, tokens), true, 'the first application writes');
@@ -128,7 +128,7 @@ test('re-applying an unchanged palette writes nothing', () => {
 
 test('a changed palette is applied', () => {
   const writes = [];
-  const host = { style: { setProperty: (n) => writes.push(n) }, dataset: {} };
+  const host = { style: { setProperty: (n) => writes.push(n) } };
 
   applyTheme(host, tokensFor(SURFACES[0]));
   writes.length = 0;
