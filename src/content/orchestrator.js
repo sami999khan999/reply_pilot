@@ -1,7 +1,11 @@
 /**
  * orchestrator.js — The "Generate" click flow controller.
  *
- * Ties together: adapter → classifier → rootFinder → worker → panel.
+ * Ties together: adapter → message cache → worker → panel.
+ *
+ * Deliberately thin. Classification and root-finding used to run here, on the
+ * chat page's main thread; they now run in the service worker, over the same
+ * message array that crosses to it anyway.
  */
 
 import { insertIntoComposer } from './logic/composerInsert.js';
@@ -105,14 +109,14 @@ export function createOrchestrator({ adapter, panel, messageCache }) {
         return;
       }
 
-      if (avail.languageModel === 'after-download') {
-        panel.showAISetup(0);
-        // The actual first session creation (with the download) happens when we prompt.
-        // We'll let it proceed and the progress is monitored in the service worker.
-      }
+      // The model downloads on first use, during the prompt below. Leave the
+      // setup screen up while that happens instead of replacing it with a
+      // loading spinner that says nothing about the wait.
+      const downloading = avail.languageModel === 'after-download';
+      if (downloading) panel.showAISetup(0);
 
-      // ── 2. Scrape messages ───────────────────────────────────────────────
-      panel.showLoading('Scanning the conversation…', 'Gathering recent messages');
+      // ── 2. Read the conversation ─────────────────────────────────────────
+      if (!downloading) panel.showLoading('Scanning the conversation…', 'Gathering recent messages');
 
       if (!adapter.isChatOpen()) {
         panel.showError('No chat open', 'Open a chat first, then click Reply Pilot.');
@@ -147,7 +151,7 @@ export function createOrchestrator({ adapter, panel, messageCache }) {
       // Classification and root-finding happen there. They are pure functions
       // over `messages`, which is crossing to the worker regardless, and running
       // them here would block the chat page for no benefit.
-      panel.showLoading('Drafting replies…', 'On-device — nothing leaves your machine');
+      if (!downloading) panel.showLoading('Drafting replies…', 'On-device — nothing leaves your machine');
 
       const myName = adapter.getMyName();
       const conversationType = adapter.isGroupChat() ? 'group' : 'direct';
