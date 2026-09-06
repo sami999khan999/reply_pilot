@@ -98,9 +98,10 @@ export function createOrchestrator({ adapter, panel }) {
         return;
       }
 
-      // messageCount caps both the scroll-back and the final window — counting
-      // your own messages and everyone else's together toward the total.
-      const messages = await adapter.scrapeMessages({ maxMessages: messageCount, scrollForHistory: true });
+      // messageCount caps the window — your own messages and everyone else's
+      // both count toward the total. Reads what the app has rendered; never
+      // scrolls the conversation.
+      const messages = await adapter.scrapeMessages({ maxMessages: messageCount });
 
       if (!messages || messages.length === 0) {
         panel.showError(

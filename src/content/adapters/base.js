@@ -97,8 +97,42 @@ export class BaseAdapter {
   getComposerBox() { throw new Error('getComposerBox not implemented'); }
 
   /**
-   * Scrapes currently-rendered messages, optionally after scrolling up for history.
+   * Returns the scrollable message-list container, for observers to scope to.
+   * @returns {Element|null}
+   */
+  getMessageList() { throw new Error('getMessageList not implemented'); }
+
+  /**
+   * Whether the platform exposes a real per-message timestamp. When false,
+   * ordering is positional and only valid within a single scrape, so history
+   * from separate scrapes cannot be merged.
+   * @returns {boolean}
+   */
+  get hasStableTimestamps() { return false; }
+
+  /**
+   * A stable identifier for the open chat, used to keep cached history from one
+   * conversation out of another. Null when it cannot be determined.
+   * @returns {string|null}
+   */
+  chatSignature() { return null; }
+
+  /** Drops cached elements and per-chat invariants. */
+  invalidate() {}
+
+  /**
+   * Reads the most recent rendered messages. Never scrolls the host app: see
+   * `logic/messageCache.js` for how older history is accumulated instead.
+   * @param {{ maxMessages?: number }} [opts]
    * @returns {Promise<Message[]>}
    */
   async scrapeMessages() { throw new Error('scrapeMessages not implemented'); }
+
+  /**
+   * Synchronous form of `scrapeMessages`, for callers already inside an idle
+   * callback that must not yield.
+   * @param {number} _maxMessages
+   * @returns {Message[]}
+   */
+  scrapeSync(_maxMessages) { throw new Error('scrapeSync not implemented'); }
 }
