@@ -74,7 +74,9 @@ export async function checkSummarizerAvailability() {
  * @returns {object|null}
  */
 export function getLanguageModelAPI() {
-  return self.LanguageModel ?? self.ai?.languageModel ?? null;
+  // globalThis rather than self: identical inside a service worker, and it lets
+  // the AI layer be exercised outside one.
+  return globalThis.LanguageModel ?? globalThis.ai?.languageModel ?? null;
 }
 
 /**
@@ -82,5 +84,5 @@ export function getLanguageModelAPI() {
  * @returns {object|null}
  */
 export function getSummarizerAPI() {
-  return self.Summarizer ?? self.ai?.summarizer ?? null;
+  return globalThis.Summarizer ?? globalThis.ai?.summarizer ?? null;
 }
