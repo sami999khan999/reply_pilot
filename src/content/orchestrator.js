@@ -4,8 +4,6 @@
  * Ties together: adapter → classifier → rootFinder → worker → panel.
  */
 
-import { classify } from './logic/classifier.js';
-import { findRoot } from './logic/rootFinder.js';
 import { insertIntoComposer } from './logic/composerInsert.js';
 import { getSettings, saveSettings } from '../shared/settings.js';
 
@@ -20,7 +18,7 @@ export function createOrchestrator({ adapter, panel, messageCache }) {
 
   // Context from the most recent generate, so "Generate more" can re-send it if
   // the (MV3) service worker was terminated and lost its warm session.
-  let lastGenerate = null;   // { messages, rootMessage, ackSamples, conversationType, myName, replyCount, referenceNote }
+  let lastGenerate = null;   // { messages, conversationType, myName, replyCount, referenceNote }
   let shownReplies = [];     // every reply option shown so far (to avoid repeats)
 
   /**
@@ -123,44 +121,35 @@ export function createOrchestrator({ adapter, panel, messageCache }) {
         ? `Read ${available} of the ${messageCount} requested — scroll up in the chat to load more history.`
         : '';
 
-      // ── 3. Classify ──────────────────────────────────────────────────────
-      const myName = adapter.getMyName();
-      const classification = classify(messages, { myName });
-
-      // ── 4. Find root message ─────────────────────────────────────────────
-      const { rootMessage, ackSamples } = findRoot(messages);
-
-      // ── 5. Call worker for AI generation ─────────────────────────────────
+      // ── 3. Hand off to the worker ────────────────────────────────────────
+      // Classification and root-finding happen there. They are pure functions
+      // over `messages`, which is crossing to the worker regardless, and running
+      // them here would block the chat page for no benefit.
       panel.showLoading('Drafting replies…', 'On-device — nothing leaves your machine');
 
+      const myName = adapter.getMyName();
       const conversationType = adapter.isGroupChat() ? 'group' : 'direct';
 
       // Remember the context so "Generate more" can rebuild if the worker's
       // warm session is lost (MV3 termination).
-      lastGenerate = { messages, rootMessage, ackSamples, conversationType, myName, replyCount, referenceNote };
+      lastGenerate = { messages, conversationType, myName, replyCount, referenceNote };
       shownReplies = [];
 
       const result = await workerMessage('GENERATE', {
         messages,
-        rootMessage,
-        ackSamples,
         conversationType,
         myName,
         replyCount,
         referenceNote,
       });
 
-      // Merge heuristic classification with AI result
-      // (AI's needsReply takes precedence when confident; else use heuristic)
-      const finalNeedsReply = params.ignoreClassification ? true : (result.needsReply ?? classification.needsReply);
-      const finalReason = result.reason || classification.reason;
       shownReplies = [...(result.replies || [])];
 
-      // ── 6. Render results ────────────────────────────────────────────────
+      // ── 4. Render results ────────────────────────────────────────────────
       panel.showResults({
-        needsReply: finalNeedsReply,
-        confidence: classification.confidence,
-        reason: finalReason,
+        needsReply: params.ignoreClassification ? true : result.needsReply,
+        confidence: result.confidence,
+        reason: result.reason,
         summary: result.summary,
         replies: result.replies || [],
         replyCount,
@@ -195,8 +184,6 @@ export function createOrchestrator({ adapter, panel, messageCache }) {
         previousReplies: shownReplies,
         context: {
           messages: lastGenerate.messages,
-          rootMessage: lastGenerate.rootMessage,
-          ackSamples: lastGenerate.ackSamples,
           conversationType: lastGenerate.conversationType,
           myName: lastGenerate.myName,
         },
