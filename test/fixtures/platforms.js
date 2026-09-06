@@ -162,6 +162,32 @@ export const FIXTURES = {
     },
   },
 
+  // WhatsApp with its direction markers renamed, as happens when the app ships
+  // a redesign. Direction must fall through to layout position rather than
+  // silently reporting every message — the user's own included — as incoming.
+  'whatsapp-renamed-classes': {
+    url: 'https://web.whatsapp.com/renamed',
+    html: `
+      <header><span title="Rafi"></span></header>
+      <div id="main" data-tab="8" role="application">
+        <div role="row" style="display:block">
+          <div class="bubble-xyz1" style="display:block;width:40%;margin-right:auto">
+            <div class="copyable-text" data-pre-plain-text="[10:01 AM, 3/4/2026] Rafi: ">
+              <span class="selectable-text"><span>theirs, on the left</span></span>
+            </div></div></div>
+        <div role="row" style="display:block">
+          <div class="bubble-xyz2" style="display:block;width:40%;margin-left:auto">
+            <div class="copyable-text" data-pre-plain-text="[10:02 AM, 3/4/2026] Me: ">
+              <span class="selectable-text"><span>mine, on the right</span></span>
+            </div></div></div>
+      </div>
+      <footer><div contenteditable="true" role="textbox" data-tab="10"></div></footer>`,
+    expect: {
+      count: 2,
+      mine: [false, true],
+    },
+  },
+
   // Telegram after a hypothetical redesign: not one of its configured selectors
   // matches, so every slot has to fall through to the structural fallback.
   redesigned: {

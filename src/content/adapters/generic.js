@@ -1,5 +1,5 @@
 import { BaseAdapter, makeMessageId } from './base.js';
-import { cachedResolver, cachedValue, queryFirst } from '../dom/query.js';
+import { cachedResolver, cachedValue, queryFirst, queryAllFirst } from '../dom/query.js';
 import { readText, findAncestorToken, batchedRightAligned, collectTail } from '../logic/scrape.js';
 import { selectorsFor } from './platforms.js';
 
@@ -98,14 +98,15 @@ export class GenericAdapter extends BaseAdapter {
       timestamp: this.config.timestamp,
     };
 
-    const rows = list.querySelectorAll(ctx.rowSelectors.join(','));
+    // First selector that finds anything wins — never the union of all of them.
+    const rows = queryAllFirst(ctx.rowSelectors, list);
     const parsed = collectTail(rows, maxMessages, (row) => {
       const item = this.parseRow(row, ctx);
       return item === null ? null : { row, ...item };
     });
     if (parsed.length === 0) return [];
 
-    const directions = this.resolveDirections(parsed, ctx);
+    const directions = this.resolveDirections(parsed, ctx, list);
     return this.assemble(parsed, directions, ctx);
   }
 
@@ -229,9 +230,10 @@ export class GenericAdapter extends BaseAdapter {
    *
    * @param {object[]} parsed
    * @param {object} ctx
+   * @param {Element} list the message-list container, used as the align datum
    * @returns {boolean[]}
    */
-  resolveDirections(parsed, ctx) {
+  resolveDirections(parsed, ctx, list) {
     for (const strategy of this.config.direction) {
       if (strategy === 'class' && parsed.some(p => p.directionClass !== null)) {
         return parsed.map(p => p.directionClass === 'out');
@@ -246,7 +248,7 @@ export class GenericAdapter extends BaseAdapter {
         }
       }
       if (strategy === 'align') {
-        return batchedRightAligned(parsed);
+        return batchedRightAligned(parsed.map(p => p.textEl), list);
       }
     }
     return parsed.map(() => false);
