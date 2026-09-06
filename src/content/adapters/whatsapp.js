@@ -1,226 +1,237 @@
-import { BaseAdapter, makeMessageId, normalizeText } from './base.js';
+import { BaseAdapter, makeMessageId } from './base.js';
+import { cachedResolver, cachedValue, queryFirst } from '../dom/query.js';
+import { readText, findAncestorToken, collectTail } from '../logic/scrape.js';
+
+const LIST_SELECTORS = [
+  '[data-tab="8"]',
+  'div[role="application"]',
+  '#main',
+];
+
+const COMPOSER_SELECTORS = [
+  '[data-testid="conversation-compose-box-input"]',
+  'div[contenteditable="true"][data-tab="10"]',
+  '#main footer div[contenteditable="true"]',
+  'div[contenteditable="true"][role="textbox"]',
+];
+
+const HEADER_SELECTORS = ['#main header', 'header'];
+
+const QUOTE_SELECTORS = ['[data-testid="quoted-message"]', '.quoted-mention'];
+
+/** Direction markers WhatsApp puts on the message bubble container. */
+const DIRECTION_TOKENS = ['message-out', 'message-in'];
 
 /**
  * WhatsApp Web adapter.
- * Anchors on `data-pre-plain-text` for sender + timestamp (stable across class churn),
- * `message-in` / `message-out` for direction, and `role="row"` for message rows.
+ *
+ * Anchors on `data-pre-plain-text` for sender + timestamp (stable across the
+ * app's class churn) and the `message-out` / `message-in` bubble markers for
+ * direction.
+ *
+ * Never scrolls. See `logic/messageCache.js` for how history is accumulated.
  */
 export class WhatsAppAdapter extends BaseAdapter {
   get name() { return 'whatsapp'; }
 
-  /** @type {Map<string, boolean>} dedup cache */
-  #seen = new Map();
+  /** WhatsApp exposes a real per-message timestamp, so scrapes can be merged. */
+  get hasStableTimestamps() { return true; }
+
+  #list = cachedResolver(() => queryFirst(LIST_SELECTORS));
+  #composer = cachedResolver(() => queryFirst(COMPOSER_SELECTORS));
+  #header = cachedResolver(() => queryFirst(HEADER_SELECTORS));
+
+  // Per-chat invariants. The old scrape resolved `getMyName()` inside the row
+  // loop — one document.querySelector per message — and re-derived group-ness on
+  // every pass.
+  #myName = cachedValue(() => this.#readMyName());
+  #isGroup = cachedValue(() => this.#readIsGroup());
 
   /**
-   * Returns the main message-list container.
-   * @returns {Element|null}
+   * Parsed rows, keyed by the element they came from. Rows are immutable once
+   * rendered, so a re-scrape (or the passive cache's idle harvest) never re-parses.
+   * @type {WeakMap<Element, import('./base.js').Message|null>}
    */
-  #getMessageList() {
-    // The message list has role="application" and contains role="row" items.
-    // Falls back to looking for the first large scrollable div inside the chat panel.
-    return (
-      document.querySelector('[data-tab="8"]') ||
-      document.querySelector('div[role="application"]') ||
-      document.querySelector('#main') ||
-      null
-    );
-  }
+  #parsed = new WeakMap();
 
-  /**
-   * Finds the actual scrollable element that holds message rows —
-   * the list container itself often isn't the scroller.
-   * @param {Element} list
-   * @returns {Element}
-   */
-  #getScroller(list) {
-    let el = list.querySelector('[data-pre-plain-text]') || list;
-    while (el && el !== document.body) {
-      if (el.scrollHeight > el.clientHeight + 50) return el;
-      el = el.parentElement;
-    }
-    return list;
-  }
+  getMessageList() { return this.#list(); }
+  getComposerBox() { return this.#composer(); }
 
   isChatOpen() {
-    const list = this.#getMessageList();
-    const composer = this.getComposerBox();
-    return !!(list && composer);
+    return this.#list() !== null && this.#composer() !== null;
   }
 
-  isGroupChat() {
-    // Group header shows multiple participants in the subtitle / context
-    // Also: in group chats, message bubbles from others include a sender-name div above the text
-    const headerInfo = document.querySelector('header [data-testid="conversation-info-header"]') ||
-      document.querySelector('header span[dir="auto"]');
-    // Look for the "participants" label in the subtitle
-    const subtitle = document.querySelector('header span[data-testid="subtitle-description"]') ||
-      document.querySelector('header div._21S-L') ||
-      document.querySelector('header div[class*="subtitle"]');
-    if (subtitle) {
-      const txt = subtitle.textContent || '';
-      // Group subtitles list participant names separated by commas
-      if ((txt.match(/,/g) || []).length >= 1) return true;
-    }
-    return false;
-  }
+  isGroupChat() { return this.#isGroup(); }
+  getMyName() { return this.#myName(); }
 
-  getMyName() {
-    // WhatsApp doesn't expose "my name" easily; profile page is separate.
-    // Best effort: look at profile button aria-label
-    const profile = document.querySelector('[data-testid="menu-bar-profile"] img');
-    if (profile && profile.alt && profile.alt !== '') return profile.alt;
-    return 'Me';
-  }
-
-  getComposerBox() {
-    return (
-      document.querySelector('[data-testid="conversation-compose-box-input"]') ||
-      document.querySelector('div[contenteditable="true"][data-tab="10"]') ||
-      document.querySelector('#main footer div[contenteditable="true"]') ||
-      document.querySelector('div[contenteditable="true"][role="textbox"]') ||
-      null
-    );
+  /** Drops per-chat caches. Called on SPA navigation and chat switches. */
+  invalidate() {
+    this.#list.reset();
+    this.#composer.reset();
+    this.#header.reset();
+    this.#myName.reset();
+    this.#isGroup.reset();
   }
 
   /**
-   * Parses a `data-pre-plain-text` attribute like "[12:01 PM, 7/12/2026] Shohan Sir: "
-   * @param {string} pre
-   * @returns {{ time: string, date: string, sender: string } | null}
+   * Identifies the open chat, so cached history from a different chat is never
+   * mixed in. Derived from the header title, which is what the user sees.
+   * @returns {string|null}
    */
-  #parsePrePlainText(pre) {
-    // Format: "[H:MM AM, M/D/YYYY] Name: "  OR  "[HH:MM, DD/MM/YYYY] Name: "
-    const m = pre.match(/^\[(.+?),\s*(.+?)\]\s*(.*?):\s*$/);
-    if (!m) return null;
-    return { time: m[1].trim(), date: m[2].trim(), sender: m[3].trim() };
+  chatSignature() {
+    const header = this.#header();
+    if (!header) return null;
+    const title = header.querySelector('span[title]');
+    const name = title?.getAttribute('title') || readText(title) || '';
+    return name ? `whatsapp:${name}` : null;
   }
 
   /**
-   * Converts time+date strings to a unix timestamp (best effort).
-   * @param {string} time e.g. "12:01 PM"
-   * @param {string} date e.g. "7/12/2026"
-   * @returns {number}
-   */
-  #toTimestamp(time, date) {
-    try {
-      return new Date(`${date} ${time}`).getTime() || Date.now();
-    } catch {
-      return Date.now();
-    }
-  }
-
-  /**
-   * Scrapes all currently-visible message rows and optionally scrolls up to gather history.
-   * @param {{ maxMessages?: number, scrollForHistory?: boolean }} [opts]
+   * Reads the most recent `maxMessages` rendered messages.
+   *
+   * Walks the rendered rows backwards and stops as soon as it has enough, so the
+   * cost tracks what was asked for rather than how much history the app happens
+   * to have rendered.
+   *
+   * @param {{ maxMessages?: number }} [opts]
    * @returns {Promise<import('./base.js').Message[]>}
    */
-  async scrapeMessages({ maxMessages = 80, scrollForHistory = true } = {}) {
-    const list = this.#getMessageList();
+  async scrapeMessages({ maxMessages = 80 } = {}) {
+    return this.scrapeSync(maxMessages);
+  }
+
+  /** @param {number} maxMessages */
+  scrapeSync(maxMessages) {
+    const list = this.#list();
     if (!list) return [];
 
-    if (scrollForHistory) {
-      await this.#scrollUpToLoad(list, maxMessages);
-    }
+    // Hoisted out of the row loop: one lookup per scrape, not one per message.
+    const ctx = { isGroup: this.#isGroup(), myName: this.#myName() };
+    const seen = new Set();
 
-    return this.#extractVisibleMessages(list, maxMessages);
-  }
+    // `[data-pre-plain-text]` marks exactly the rows that carry a message, so we
+    // skip the outer role="row" pass over dividers and system notices entirely.
+    const rows = list.querySelectorAll('[data-pre-plain-text]');
 
-  /**
-   * Programmatically scrolls the message list up to load older messages.
-   * @param {Element} list
-   * @param {number} targetCount
-   */
-  async #scrollUpToLoad(list, targetCount) {
-    const scroller = this.#getScroller(list);
-    const MAX_SCROLLS = 15;
-    for (let i = 0; i < MAX_SCROLLS; i++) {
-      const rows = list.querySelectorAll('[data-pre-plain-text]');
-      if (rows.length >= targetCount) break;
-      const before = scroller.scrollTop;
-      scroller.scrollTop = 0;
-      await new Promise(r => setTimeout(r, 400));
-      if (scroller.scrollTop === before) break; // hit the top
-    }
-    // Scroll back to bottom
-    scroller.scrollTop = scroller.scrollHeight;
-    await new Promise(r => setTimeout(r, 200));
-  }
-
-  /**
-   * Extracts normalized messages from currently rendered rows, keeping only
-   * the most recent `maxMessages` (your own messages and others' both count
-   * toward the total).
-   * @param {Element} list
-   * @param {number} [maxMessages]
-   * @returns {import('./base.js').Message[]}
-   */
-  #extractVisibleMessages(list, maxMessages = Infinity) {
-    const isGroup = this.isGroupChat();
-    const messages = [];
-    this.#seen.clear();
-
-    const rows = list.querySelectorAll('div[role="row"]');
-    rows.forEach(row => {
-      // Find the element with data-pre-plain-text (present on copyable-text spans)
-      const copyable = row.querySelector('[data-pre-plain-text]');
-      if (!copyable) return; // system messages, date dividers, etc.
-
-      const pre = copyable.getAttribute('data-pre-plain-text') || '';
-      const parsed = this.#parsePrePlainText(pre);
-      if (!parsed) return;
-
-      // Determine direction
-      // WhatsApp uses "message-in" / "message-out" on an ancestor container
-      const isOut = row.querySelector('[class*="message-out"]') !== null ||
-        !!row.closest('[class*="message-out"]');
-      const isIn = row.querySelector('[class*="message-in"]') !== null ||
-        !!row.closest('[class*="message-in"]');
-      const isMe = isOut && !isIn;
-
-      // Extract text content from the copyable element
-      let text = copyable.querySelector('span.selectable-text')?.innerText ||
-        copyable.innerText ||
-        copyable.textContent ||
-        '';
-      text = text.trim();
-      if (!text) return;
-
-      // Check for quoted / replied-to text
-      let quotedText;
-      const quoteBlock = row.querySelector('[data-testid="quoted-message"]') ||
-        row.querySelector('div[role="button"] span[dir="ltr"]');
-      if (quoteBlock) {
-        quotedText = quoteBlock.textContent?.trim();
-      }
-
-      // Check for @mention of me (WhatsApp marks mentions as spans with data-mention)
-      const mentionSpans = row.querySelectorAll('[data-mention]');
-      const myName = this.getMyName();
-      let mentionsMe = false;
-      mentionSpans.forEach(s => {
-        const txt = (s.getAttribute('data-mention') || s.textContent || '').toLowerCase();
-        if (txt.includes(myName.toLowerCase()) || txt.includes('@you')) mentionsMe = true;
-      });
-
-      const ts = this.#toTimestamp(parsed.time, parsed.date);
-      const id = makeMessageId(parsed.sender, ts, text);
-
-      if (this.#seen.has(id)) return; // deduplicate
-      this.#seen.set(id, true);
-
-      messages.push({
-        id,
-        sender: parsed.sender,
-        isMe,
-        text,
-        ts,
-        isGroup,
-        mentionsMe,
-        quotedText,
-      });
+    return collectTail(rows, maxMessages, (row) => {
+      const msg = this.#parseRow(row, ctx);
+      if (msg === null || seen.has(msg.id)) return null;
+      seen.add(msg.id);
+      return msg;
     });
-
-    // Rows are in chronological order (oldest first), so the tail is the most
-    // recent conversation — keep the last N, interleaving mine and others'.
-    return Number.isFinite(maxMessages) ? messages.slice(-maxMessages) : messages;
   }
+
+  // ── Row parsing ────────────────────────────────────────────────────────────
+
+  /**
+   * @param {Element} row the `[data-pre-plain-text]` element
+   * @param {{ isGroup: boolean, myName: string }} ctx
+   * @returns {import('./base.js').Message|null}
+   */
+  #parseRow(row, ctx) {
+    const cached = this.#parsed.get(row);
+    if (cached !== undefined) return cached;
+
+    const msg = this.#buildMessage(row, ctx);
+    this.#parsed.set(row, msg);
+    return msg;
+  }
+
+  /**
+   * @param {Element} row
+   * @param {{ isGroup: boolean, myName: string }} ctx
+   * @returns {import('./base.js').Message|null}
+   */
+  #buildMessage(row, ctx) {
+    const parsed = parsePrePlainText(row.getAttribute('data-pre-plain-text') || '');
+    if (!parsed) return null;
+
+    const text = readText(row.querySelector('span.selectable-text') || row);
+    if (!text) return null;
+
+    // Bounded ancestor walk for direction, which also gives us the bubble to
+    // scope the quote and mention lookups to.
+    const bubble = findAncestorToken(row, DIRECTION_TOKENS);
+    const isMe = bubble?.token === 'message-out';
+    const scope = bubble?.node || row;
+
+    const quoteEl = queryFirst(QUOTE_SELECTORS, scope);
+    const quotedText = quoteEl ? readText(quoteEl) : undefined;
+
+    const ts = toTimestamp(parsed.time, parsed.date);
+
+    return {
+      id: makeMessageId(parsed.sender, ts, text),
+      sender: parsed.sender,
+      isMe,
+      text,
+      ts,
+      isGroup: ctx.isGroup,
+      // Mentions only carry meaning in a group, and never on your own message.
+      mentionsMe: ctx.isGroup && !isMe && mentionsName(scope, ctx.myName),
+      quotedText,
+    };
+  }
+
+  // ── Per-chat invariants ────────────────────────────────────────────────────
+
+  #readMyName() {
+    const profile = document.querySelector('[data-testid="menu-bar-profile"] img');
+    const alt = profile?.getAttribute('alt');
+    return alt || 'Me';
+  }
+
+  #readIsGroup() {
+    const header = this.#header();
+    if (!header) return false;
+
+    const subtitle =
+      header.querySelector('span[data-testid="subtitle-description"]') ||
+      header.querySelector('div[class*="subtitle"]');
+    if (!subtitle) return false;
+
+    // Group subtitles list participant names separated by commas.
+    const txt = subtitle.textContent || '';
+    return txt.indexOf(',') !== -1;
+  }
+}
+
+// ── Pure helpers ─────────────────────────────────────────────────────────────
+
+/**
+ * Parses a `data-pre-plain-text` value like "[12:01 PM, 7/12/2026] Shohan Sir: ".
+ * @param {string} pre
+ * @returns {{ time: string, date: string, sender: string }|null}
+ */
+function parsePrePlainText(pre) {
+  const m = pre.match(/^\[(.+?),\s*(.+?)\]\s*(.*?):\s*$/);
+  if (!m) return null;
+  return { time: m[1].trim(), date: m[2].trim(), sender: m[3].trim() };
+}
+
+/**
+ * @param {string} time e.g. "12:01 PM"
+ * @param {string} date e.g. "7/12/2026"
+ * @returns {number}
+ */
+function toTimestamp(time, date) {
+  const parsed = Date.parse(`${date} ${time}`);
+  return Number.isNaN(parsed) ? Date.now() : parsed;
+}
+
+/**
+ * @param {Element} scope the message bubble
+ * @param {string} myName
+ * @returns {boolean}
+ */
+function mentionsName(scope, myName) {
+  const spans = scope.querySelectorAll('[data-mention]');
+  if (spans.length === 0) return false;
+
+  const needle = myName.toLowerCase();
+  for (let i = 0; i < spans.length; i++) {
+    const txt = (spans[i].getAttribute('data-mention') || spans[i].textContent || '').toLowerCase();
+    if (txt.includes('@you') || (needle !== 'me' && txt.includes(needle))) return true;
+  }
+  return false;
 }
