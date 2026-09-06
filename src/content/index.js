@@ -13,6 +13,8 @@ import { createFAB } from './ui/fab.js';
 import { createPanel } from './ui/panel.js';
 import { createOrchestrator } from './orchestrator.js';
 import { createLifecycle } from './lifecycle.js';
+import { createMessageCache } from './logic/messageCache.js';
+import { MESSAGE_COUNT_MAX } from '../shared/settings.js';
 
 (function init() {
   // Don't double-inject
@@ -23,6 +25,10 @@ import { createLifecycle } from './lifecycle.js';
 
   const { adapter } = detected;
   const { shadow } = mountShadowHost();
+
+  // Banks messages as the host app renders them, so Generate never has to
+  // scroll the conversation to find history.
+  const messageCache = createMessageCache({ adapter, capacity: MESSAGE_COUNT_MAX });
 
   let panelOpen = false;
   let chatOpen = false;
@@ -55,7 +61,7 @@ import { createLifecycle } from './lifecycle.js';
       },
     });
 
-    orchestrator = createOrchestrator({ adapter, panel });
+    orchestrator = createOrchestrator({ adapter, panel, messageCache });
     return { panel, orchestrator };
   }
 
@@ -80,19 +86,25 @@ import { createLifecycle } from './lifecycle.js';
 
     onChatStateChange(open) {
       chatOpen = open;
-      if (!open && panelOpen) {
-        panel?.close();
-        panelOpen = false;
-        orchestrator?.onCancel();
+      if (open) {
+        messageCache.start();
+      } else {
+        messageCache.stop();
+        if (panelOpen) {
+          panel?.close();
+          panelOpen = false;
+          orchestrator?.onCancel();
+        }
       }
       syncFab();
-      adapter.onChatStateChange?.(open);
     },
 
     onNavigate() {
-      // SPA route change — the previous chat's cached elements and per-chat
-      // invariants no longer describe what's on screen.
-      adapter.invalidate?.();
+      // SPA route change — the previous chat's cached elements, per-chat
+      // invariants and banked history no longer describe what's on screen.
+      adapter.invalidate();
+      messageCache.stop();
+      messageCache.reset();
       if (panelOpen) {
         panel?.close();
         panelOpen = false;
@@ -101,7 +113,12 @@ import { createLifecycle } from './lifecycle.js';
     },
 
     onVisibilityChange(visible) {
-      adapter.onVisibilityChange?.(visible);
+      // Nothing to watch in a background tab.
+      if (visible) {
+        if (chatOpen) messageCache.start();
+      } else {
+        messageCache.stop();
+      }
     },
   });
 })();

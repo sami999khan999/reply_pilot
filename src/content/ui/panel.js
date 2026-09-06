@@ -224,13 +224,14 @@ export function createPanel(shadow, { onClose, onGenerateMore, onInsert, onRetry
    *   summary?: string,
    *   replies?: string[],
    *   replyCount?: number,
+   *   historyNote?: string,
    *   onDraftAnyway?: () => void,
    * }} result
    */
   function showResults(result) {
     batchCount = 0;
     renderedCount = 0;
-    const { needsReply, confidence, reason, summary, replies = [], replyCount, onDraftAnyway } = result;
+    const { needsReply, confidence, reason, summary, replies = [], replyCount, historyNote, onDraftAnyway } = result;
     if (replyCount) currentReplyCount = clampReplyCount(replyCount);
 
     let statusClass = 'needed';
@@ -256,6 +257,10 @@ export function createPanel(shadow, { onClose, onGenerateMore, onInsert, onRetry
         </div>
       </div>
     `;
+
+    if (historyNote) {
+      html += `<p class="rp-history-note">${escapeHtml(historyNote)}</p>`;
+    }
 
     if (summary) {
       html += `

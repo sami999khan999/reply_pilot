@@ -13,9 +13,10 @@ import { getSettings, saveSettings } from '../shared/settings.js';
  * @param {{
  *   adapter: import('./adapters/base.js').BaseAdapter,
  *   panel: ReturnType<import('./ui/panel.js').createPanel>,
+ *   messageCache: ReturnType<import('./logic/messageCache.js').createMessageCache>,
  * }} deps
  */
-export function createOrchestrator({ adapter, panel }) {
+export function createOrchestrator({ adapter, panel, messageCache }) {
 
   // Context from the most recent generate, so "Generate more" can re-send it if
   // the (MV3) service worker was terminated and lost its warm session.
@@ -99,17 +100,28 @@ export function createOrchestrator({ adapter, panel }) {
       }
 
       // messageCount caps the window — your own messages and everyone else's
-      // both count toward the total. Reads what the app has rendered; never
-      // scrolls the conversation.
-      const messages = await adapter.scrapeMessages({ maxMessages: messageCount });
+      // both count toward the total. Reads what the app has rendered plus what
+      // the cache has banked; never scrolls the conversation.
+      messageCache.pause();
+      let messages, available;
+      try {
+        ({ messages, available } = messageCache.read(messageCount));
+      } finally {
+        messageCache.resume();
+      }
 
-      if (!messages || messages.length === 0) {
+      if (messages.length === 0) {
         panel.showError(
           'Couldn\'t read messages',
           'The chat DOM structure may have changed. Try refreshing the page.'
         );
         return;
       }
+
+      // We deliberately do not scroll to close a shortfall — say so instead.
+      const historyNote = available < messageCount
+        ? `Read ${available} of the ${messageCount} requested — scroll up in the chat to load more history.`
+        : '';
 
       // ── 3. Classify ──────────────────────────────────────────────────────
       const myName = adapter.getMyName();
@@ -152,6 +164,7 @@ export function createOrchestrator({ adapter, panel }) {
         summary: result.summary,
         replies: result.replies || [],
         replyCount,
+        historyNote,
         onDraftAnyway: () => onGenerate({ ...params, ignoreClassification: true }),
       });
 
