@@ -121,12 +121,19 @@ export function buildTokens({ base, text, brand, dark }) {
  */
 export function applyTheme(host, tokens) {
   const signature = JSON.stringify(tokens);
-  if (host.dataset.rpTheme === signature) return false;
+  if (APPLIED.get(host) === signature) return false;
 
   for (const name in tokens) host.style.setProperty(name, tokens[name]);
-  host.dataset.rpTheme = signature;
+  APPLIED.set(host, signature);
   return true;
 }
+
+/**
+ * The palette last written to each host. Kept here rather than in a data
+ * attribute: an attribute write is itself a DOM mutation, and this is
+ * bookkeeping the page has no business seeing.
+ */
+const APPLIED = new WeakMap();
 
 /**
  * Keeps the panel in step with the host when the user switches theme.
