@@ -23,8 +23,14 @@ const BACKGROUND_SEARCH_DEPTH = 8;
 /** An almost-transparent layer is not the surface the user perceives. */
 const OPAQUE_ENOUGH = 0.6;
 
-/** Attributes host apps flip when the user switches theme. */
-const THEME_ATTRIBUTES = ['class', 'style', 'data-theme', 'theme', 'data-color-mode', 'data-bs-theme'];
+/**
+ * Attributes host apps flip when the user switches theme.
+ *
+ * Deliberately excludes `style`: these apps write inline styles on <html> for
+ * scroll locks and viewport variables, none of which is a theme change, and
+ * each one would schedule a fresh round of computed-style reads.
+ */
+const THEME_ATTRIBUTES = ['class', 'data-theme', 'theme', 'data-color-mode', 'data-bs-theme'];
 
 /**
  * Reads the host page's colours and returns the panel's palette.
@@ -105,11 +111,21 @@ export function buildTokens({ base, text, brand, dark }) {
  * the shadow tree and override the stylesheet's `:host` defaults, so the panel
  * needs no per-platform rules.
  *
+ * Writing a custom property invalidates style for the whole shadow tree, and
+ * `class` on <html> churns constantly in these apps — scroll state, open modals
+ * — so an unchanged palette must cost nothing.
+ *
  * @param {HTMLElement} host
  * @param {Record<string, string>} tokens
+ * @returns {boolean} whether anything was actually written
  */
 export function applyTheme(host, tokens) {
+  const signature = JSON.stringify(tokens);
+  if (host.dataset.rpTheme === signature) return false;
+
   for (const name in tokens) host.style.setProperty(name, tokens[name]);
+  host.dataset.rpTheme = signature;
+  return true;
 }
 
 /**

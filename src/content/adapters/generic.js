@@ -96,6 +96,10 @@ export class GenericAdapter extends BaseAdapter {
       quoteSelectors: selectorsFor(this.config, 'quote'),
       senderSelectors: this.config.sender,
       timestamp: this.config.timestamp,
+      // Resolved once, alongside the other per-chat invariants: reading it in
+      // assemble() meant a header query and a text walk for every row on a
+      // platform that names no senders.
+      unknownSender: this.unknownSender(),
     };
 
     // First selector that finds anything wins — never the union of all of them.
@@ -277,7 +281,7 @@ export class GenericAdapter extends BaseAdapter {
       const isMe = directions[i] === true;
 
       if (p.sender) lastSender = p.sender;
-      const sender = p.sender || (isMe ? 'Me' : lastSender) || this.fallbackSender(isMe);
+      const sender = p.sender || (isMe ? 'Me' : lastSender) || ctx.unknownSender;
 
       // Where the platform gives no real timestamp, order positionally: correct
       // within this scrape, which is all the prompt builder needs. Such scrapes
@@ -303,9 +307,12 @@ export class GenericAdapter extends BaseAdapter {
     return messages;
   }
 
-  /** @param {boolean} isMe */
-  fallbackSender(isMe) {
-    if (isMe) return 'Me';
+  /**
+   * What to call the other party when no row names them — the chat's own title,
+   * which is who you are talking to in a direct conversation.
+   * @returns {string}
+   */
+  unknownSender() {
     const signature = this.chatSignature();
     return signature ? signature.slice(signature.indexOf(':') + 1) : 'Them';
   }
