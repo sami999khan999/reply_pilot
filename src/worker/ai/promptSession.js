@@ -58,21 +58,24 @@ async function getSession(opts = {}) {
  * Prompts the model with the full payload and returns parsed JSON.
  *
  * @param {string} payload
- * @param {{ onDownloadProgress?: (e: ProgressEvent) => void, replyCount?: number }} [opts]
+ * @param {{ onDownloadProgress?: (e: ProgressEvent) => void, replyCount?: number, signal?: AbortSignal }} [opts]
  * @returns {Promise<{ needsReply: boolean, reason: string, summary: string, replies: string[] }>}
  */
 export async function promptForReplies(payload, opts = {}) {
   const session = await getSession(opts);
   const schema = buildResponseSchema(opts.replyCount ?? 3);
+  const signal = opts.signal;
 
   let raw;
   try {
     // Use responseConstraint for structured output if supported
-    raw = await session.prompt(payload, { responseConstraint: schema });
+    raw = await session.prompt(payload, { responseConstraint: schema, signal });
   } catch (constraintErr) {
+    // An abort is the caller's decision, not an unsupported-feature signal.
+    if (isAbort(constraintErr)) throw constraintErr;
     // Fallback: prompt without constraint and parse manually
     console.warn('[ReplyPilot] responseConstraint not supported, falling back:', constraintErr);
-    raw = await session.prompt(payload);
+    raw = await session.prompt(payload, { signal });
   }
 
   return parseJSON(raw, {
@@ -92,16 +95,19 @@ export async function promptForReplies(payload, opts = {}) {
  * @param {string} morePrompt
  * @param {object} moreSchema
  * @param {number} [replyCount]
+ * @param {{ signal?: AbortSignal }} [opts]
  * @returns {Promise<string[]>}
  */
-export async function promptForMoreReplies(morePrompt, moreSchema, replyCount = 3) {
+export async function promptForMoreReplies(morePrompt, moreSchema, replyCount = 3, opts = {}) {
   if (!_session) throw new Error('No active session');
+  const signal = opts.signal;
 
   let raw;
   try {
-    raw = await _session.prompt(morePrompt, { responseConstraint: moreSchema });
-  } catch {
-    raw = await _session.prompt(morePrompt);
+    raw = await _session.prompt(morePrompt, { responseConstraint: moreSchema, signal });
+  } catch (err) {
+    if (isAbort(err)) throw err;
+    raw = await _session.prompt(morePrompt, { signal });
   }
 
   // The response may be a JSON array or a JSON object with a replies field
@@ -129,6 +135,12 @@ export function resetSession() {
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
+
+/** @param {unknown} err */
+function isAbort(err) {
+  return err instanceof Error && err.name === 'AbortError';
+}
+
 
 /**
  * Safely parses JSON from a model response, with a fallback default.
