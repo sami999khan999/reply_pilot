@@ -155,11 +155,15 @@ export function createMessageCache({ adapter, capacity }) {
    * @returns {{ messages: import('../adapters/base.js').Message[], available: number, requested: number }}
    */
   function read(limit) {
-    const fresh = adapter.scrapeSync(limit);
-
     if (!mergeable) {
+      const fresh = adapter.scrapeSync(limit);
       return { messages: fresh, available: fresh.length, requested: limit };
     }
+
+    // Read up to capacity rather than just `limit`, so a first read — before the
+    // observer has had a chance to bank anything — sees everything rendered.
+    // Otherwise `available` could never tell "exactly enough" from "far more".
+    const fresh = adapter.scrapeSync(Math.max(limit, capacity));
 
     syncSignature();
     absorb(fresh);

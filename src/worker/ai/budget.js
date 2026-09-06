@@ -45,9 +45,13 @@ export function splitBudget(messages, rootMessage) {
   const recentCandidates = messages.slice(-HARD_RAW_WINDOW);
   const olderCandidates = messages.slice(0, -HARD_RAW_WINDOW);
 
-  // Check token budget for recent candidates
+  // Walk back from the newest message until the raw budget is spent. `cutoff` is
+  // the first index we keep, so it starts at 0 — everything fits until proven
+  // otherwise. Starting it at `length` meant that whenever the recent messages
+  // did fit, the loop never broke, the cutoff stayed at the end, and the raw
+  // window came out empty: the model saw only a summary and no actual messages.
   let tokenCount = 0;
-  let cutoff = recentCandidates.length;
+  let cutoff = 0;
   for (let i = recentCandidates.length - 1; i >= 0; i--) {
     const t = estimateTokens(`${recentCandidates[i].sender}: ${recentCandidates[i].text}`);
     if (tokenCount + t > MAX_RAW_TOKENS) {
