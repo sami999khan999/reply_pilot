@@ -2,9 +2,11 @@
   "manifest_version": 3,
   "name": "Reply Pilot",
   "version": "1.0.0",
-  "description": "On-device AI reply assistant for WhatsApp Web and Messenger using Chrome's built-in Gemini Nano.",
+  "description": "On-device AI reply assistant for WhatsApp, Messenger, Instagram, Telegram, Discord, Slack, X, LinkedIn and Google Chat, using Chrome's built-in Gemini Nano.",
   "minimum_chrome_version": "138",
-  "permissions": ["storage"],
+  "permissions": [
+    "storage"
+  ],
   "action": {
     "default_title": "Reply Pilot",
     "default_popup": "src/popup/popup.html"
@@ -18,19 +20,43 @@
       "matches": [
         "https://web.whatsapp.com/*",
         "https://www.messenger.com/*",
-        "https://www.facebook.com/messages/*"
+        "https://www.facebook.com/messages/*",
+        "https://www.instagram.com/direct/*",
+        "https://web.telegram.org/*",
+        "https://discord.com/channels/*",
+        "https://app.slack.com/*",
+        "https://x.com/messages/*",
+        "https://twitter.com/messages/*",
+        "https://www.linkedin.com/messaging/*",
+        "https://chat.google.com/*",
+        "https://mail.google.com/chat/*"
       ],
-      "js": ["src/content/loader.js"],
-      "run_at": "document_idle"
+      "js": [
+        "src/content/loader.js"
+      ],
+      "run_at": "document_idle",
+      "all_frames": false
     }
   ],
   "web_accessible_resources": [
     {
-      "resources": ["src/content/*", "src/shared/*"],
+      "resources": [
+        "src/content/*",
+        "src/shared/*"
+      ],
       "matches": [
         "https://web.whatsapp.com/*",
         "https://www.messenger.com/*",
-        "https://www.facebook.com/*"
+        "https://www.facebook.com/messages/*",
+        "https://www.instagram.com/direct/*",
+        "https://web.telegram.org/*",
+        "https://discord.com/channels/*",
+        "https://app.slack.com/*",
+        "https://x.com/messages/*",
+        "https://twitter.com/messages/*",
+        "https://www.linkedin.com/messaging/*",
+        "https://chat.google.com/*",
+        "https://mail.google.com/chat/*"
       ]
     }
   ],
