@@ -126,13 +126,9 @@ export function createOrchestrator({ adapter, panel, messageCache }) {
       // messageCount caps the window — your own messages and everyone else's
       // both count toward the total. Reads what the app has rendered plus what
       // the cache has banked; never scrolls the conversation.
-      messageCache.pause();
-      let messages, available;
-      try {
-        ({ messages, available } = messageCache.read(messageCount));
-      } finally {
-        messageCache.resume();
-      }
+      // No need to pause the cache's harvester: `read` is synchronous, and
+      // harvests are scheduled through timers, so neither can interleave.
+      const { messages, available } = messageCache.read(messageCount);
 
       if (messages.length === 0) {
         panel.showError(
@@ -210,6 +206,8 @@ export function createOrchestrator({ adapter, panel, messageCache }) {
       panel.showToast('Generate replies first.');
       return;
     }
+    onCancel(); // supersede anything still running
+
     const requestId = nextRequestId();
     inFlight = requestId;
 
@@ -243,6 +241,10 @@ export function createOrchestrator({ adapter, panel, messageCache }) {
       }
 
       if (inFlight !== requestId) return;
+
+      // The worker hands back the handle it now holds the conversation under —
+      // after a cold rebuild that is a new one.
+      if (result.contextId) contextId = result.contextId;
 
       const replies = result.replies || [];
       shownReplies = [...shownReplies, ...replies];
