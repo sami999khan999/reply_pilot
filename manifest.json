@@ -47,16 +47,16 @@
       "matches": [
         "https://web.whatsapp.com/*",
         "https://www.messenger.com/*",
-        "https://www.facebook.com/messages/*",
-        "https://www.instagram.com/direct/*",
+        "https://www.facebook.com/*",
+        "https://www.instagram.com/*",
         "https://web.telegram.org/*",
-        "https://discord.com/channels/*",
+        "https://discord.com/*",
         "https://app.slack.com/*",
-        "https://x.com/messages/*",
-        "https://twitter.com/messages/*",
-        "https://www.linkedin.com/messaging/*",
+        "https://x.com/*",
+        "https://twitter.com/*",
+        "https://www.linkedin.com/*",
         "https://chat.google.com/*",
-        "https://mail.google.com/chat/*"
+        "https://mail.google.com/*"
       ]
     }
   ],
