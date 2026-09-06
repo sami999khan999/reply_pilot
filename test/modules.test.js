@@ -18,8 +18,10 @@ test('the content-script graph resolves', async () => {
     import('../src/content/adapters/platforms.js'),
     import('../src/content/adapters/generic.js'),
     import('../src/content/adapters/whatsapp.js'),
+    import('../src/shared/color.js'),
+    import('../src/content/ui/theme.js'),
   ]);
-  assert.equal(modules.length, 10);
+  assert.equal(modules.length, 12);
 });
 
 test('every platform builds an adapter meeting the base contract', async () => {

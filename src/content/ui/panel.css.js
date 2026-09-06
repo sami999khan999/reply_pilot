@@ -1,13 +1,22 @@
 /**
- * panel.css.js — "Flight deck" design system for Reply Pilot.
+ * panel.css.js — the panel's design system.
  *
- * Identity: a co-pilot's instrument panel. Deep navy blueprint grid,
- * aviation amber accents, monospace instrument readouts, radar-sweep
- * loading, boarding-pass reply cards. Zero external assets — everything
- * is CSS (page CSP blocks remote fonts/images inside the shadow root).
+ * Identity: a co-pilot's instrument panel — blueprint grid, monospace readouts,
+ * radar-sweep loading, boarding-pass reply cards. Zero external assets, since
+ * the page's CSP blocks remote fonts and images inside the shadow root.
+ *
+ * The palette is NOT fixed. Every colour below resolves from a small set of
+ * tokens that `ui/theme.js` writes onto the shadow host after reading the colours
+ * the chat app is actually using, so the panel matches WhatsApp light, Discord
+ * dark, Slack aubergine and everything else without per-platform rules. Derived
+ * shades are `color-mix()` against those tokens rather than literals — that is
+ * what lets one stylesheet serve both light and dark.
+ *
+ * The values declared here are only the fallback for the moment before
+ * detection runs, or if the host page yields nothing readable.
  */
 
-/** @returns {string} CSS injected into the Shadow DOM */
+/** @returns {string} CSS adopted into the Shadow DOM */
 export const PANEL_CSS = /* css */`
   *, *::before, *::after {
     box-sizing: border-box;
@@ -18,31 +27,39 @@ export const PANEL_CSS = /* css */`
   :host {
     font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
 
-    /* Instrument palette */
+    /* Overwritten per-site by ui/theme.js — see the note above. */
+    --rp-scheme: dark;
     --rp-bg: #0a0f1e;
     --rp-bg-2: #0d1528;
-    --rp-grid: rgba(140, 180, 255, 0.05);
     --rp-surface: #111a30;
     --rp-surface-2: #17233e;
-    --rp-border: rgba(130, 165, 225, 0.16);
-    --rp-border-strong: rgba(130, 165, 225, 0.3);
-
-    --rp-amber: #ffb454;
-    --rp-amber-2: #ff8a3d;
-    --rp-amber-glow: rgba(255, 170, 70, 0.35);
-    --rp-radar: #2dd4bf;
-
     --rp-text: #e9eefb;
     --rp-muted: #93a4c4;
     --rp-dim: #5c6d92;
+    --rp-accent: #ffb454;
+    --rp-accent-2: #ff8a3d;
+    --rp-on-accent: var(--rp-on-accent);
+    --rp-elevate: #ffffff;
+    --rp-shadow-color: #000000;
+    --rp-shadow-strength: 55%;
     --rp-success: #4ade80;
     --rp-warn: #fbbf24;
     --rp-error: #f87171;
 
+    /* Derived once, so the rules below stay readable. */
+    --rp-border: color-mix(in srgb, var(--rp-elevate) 16%, transparent);
+    --rp-border-strong: color-mix(in srgb, var(--rp-elevate) 30%, transparent);
+    --rp-grid: color-mix(in srgb, var(--rp-text) 5%, transparent);
+    --rp-radar: var(--rp-accent);
+    --rp-accent-glow: color-mix(in srgb, var(--rp-accent) 35%, transparent);
+    --rp-hover: color-mix(in srgb, var(--rp-elevate) 6%, transparent);
+    --rp-hover-strong: color-mix(in srgb, var(--rp-elevate) 11%, transparent);
+    --rp-shadow-soft: color-mix(in srgb, var(--rp-shadow-color) var(--rp-shadow-strength), transparent);
+
     --rp-mono: ui-monospace, 'Cascadia Code', 'SF Mono', Consolas, 'Liberation Mono', monospace;
     --rp-radius: 12px;
     --rp-radius-sm: 8px;
-    --rp-shadow: -16px 0 48px rgba(2, 6, 18, 0.65);
+    --rp-shadow: -16px 0 48px var(--rp-shadow-soft);
     --rp-transition: 0.22s cubic-bezier(0.4, 0, 0.2, 1);
   }
 
@@ -67,16 +84,16 @@ export const PANEL_CSS = /* css */`
     width: 54px;
     height: 54px;
     border-radius: 50%;
-    background: linear-gradient(140deg, var(--rp-amber) 0%, var(--rp-amber-2) 100%);
+    background: linear-gradient(140deg, var(--rp-accent) 0%, var(--rp-accent-2) 100%);
     border: none;
     cursor: pointer;
     display: flex;
     align-items: center;
     justify-content: center;
     box-shadow:
-      0 6px 24px var(--rp-amber-glow),
-      0 2px 8px rgba(0, 0, 0, 0.45),
-      inset 0 1px 0 rgba(255, 255, 255, 0.35);
+      0 6px 24px var(--rp-accent-glow),
+      0 2px 8px color-mix(in srgb, var(--rp-shadow-color) 40%, transparent),
+      inset 0 1px 0 color-mix(in srgb, var(--rp-elevate) 30%, transparent);
     z-index: 2147483646;
     transition: transform var(--rp-transition), box-shadow var(--rp-transition), opacity var(--rp-transition);
     user-select: none;
@@ -86,9 +103,9 @@ export const PANEL_CSS = /* css */`
     /* takes off: lifts and banks slightly */
     transform: translateY(-3px) rotate(-8deg) scale(1.05);
     box-shadow:
-      0 12px 32px var(--rp-amber-glow),
-      0 4px 12px rgba(0, 0, 0, 0.5),
-      inset 0 1px 0 rgba(255, 255, 255, 0.35);
+      0 12px 32px var(--rp-accent-glow),
+      0 4px 12px color-mix(in srgb, var(--rp-shadow-color) 45%, transparent),
+      inset 0 1px 0 color-mix(in srgb, var(--rp-elevate) 30%, transparent);
   }
 
   #rp-fab:active { transform: scale(0.94); }
@@ -103,7 +120,7 @@ export const PANEL_CSS = /* css */`
     width: 24px;
     height: 24px;
     fill: none;
-    stroke: #1c1204;
+    stroke: var(--rp-on-accent);
     stroke-width: 2;
     stroke-linecap: round;
     stroke-linejoin: round;
@@ -113,7 +130,7 @@ export const PANEL_CSS = /* css */`
     position: absolute;
     inset: -4px;
     border-radius: 50%;
-    border: 2px solid var(--rp-amber);
+    border: 2px solid var(--rp-accent);
     opacity: 0;
     pointer-events: none;
   }
@@ -172,7 +189,7 @@ export const PANEL_CSS = /* css */`
     width: 3px;
     background: repeating-linear-gradient(
       180deg,
-      var(--rp-amber) 0 14px,
+      var(--rp-accent) 0 14px,
       transparent 14px 26px
     );
     opacity: 0.55;
@@ -186,27 +203,27 @@ export const PANEL_CSS = /* css */`
     gap: 12px;
     padding: 18px 18px 14px 20px;
     border-bottom: 1px dashed var(--rp-border-strong);
-    background: linear-gradient(180deg, rgba(255, 180, 84, 0.07) 0%, transparent 100%);
+    background: linear-gradient(180deg, color-mix(in srgb, var(--rp-accent) 8%, transparent) 0%, transparent 100%);
     flex-shrink: 0;
   }
 
   .rp-panel-logo {
     width: 36px;
     height: 36px;
-    background: linear-gradient(140deg, var(--rp-amber), var(--rp-amber-2));
+    background: linear-gradient(140deg, var(--rp-accent), var(--rp-accent-2));
     border-radius: 10px;
     display: flex;
     align-items: center;
     justify-content: center;
     flex-shrink: 0;
-    box-shadow: 0 4px 14px var(--rp-amber-glow), inset 0 1px 0 rgba(255,255,255,0.35);
+    box-shadow: 0 4px 14px var(--rp-accent-glow), inset 0 1px 0 color-mix(in srgb, var(--rp-elevate) 30%, transparent);
   }
 
   .rp-panel-logo svg {
     width: 19px;
     height: 19px;
     fill: none;
-    stroke: #1c1204;
+    stroke: var(--rp-on-accent);
     stroke-width: 2;
     stroke-linecap: round;
     stroke-linejoin: round;
@@ -256,7 +273,7 @@ export const PANEL_CSS = /* css */`
     width: 32px;
     height: 32px;
     border: 1px solid var(--rp-border);
-    background: rgba(255, 255, 255, 0.04);
+    background: var(--rp-hover);
     border-radius: var(--rp-radius-sm);
     cursor: pointer;
     display: flex;
@@ -267,7 +284,7 @@ export const PANEL_CSS = /* css */`
   }
 
   .rp-close-btn:hover {
-    background: rgba(255, 255, 255, 0.09);
+    background: var(--rp-hover-strong);
     border-color: var(--rp-border-strong);
     color: var(--rp-text);
   }
@@ -302,7 +319,7 @@ export const PANEL_CSS = /* css */`
     padding: 12px 16px 16px;
     border-top: 1px dashed var(--rp-border-strong);
     flex-shrink: 0;
-    background: rgba(10, 15, 30, 0.6);
+    background: color-mix(in srgb, var(--rp-bg) 72%, transparent);
   }
 
   /* ── STATES ── */
@@ -325,8 +342,8 @@ export const PANEL_CSS = /* css */`
     width: 84px;
     height: 84px;
     border-radius: 50%;
-    border: 1px solid rgba(45, 212, 191, 0.4);
-    background: radial-gradient(circle, rgba(45, 212, 191, 0.09) 0%, transparent 70%);
+    border: 1px solid color-mix(in srgb, var(--rp-radar) 40%, transparent);
+    background: radial-gradient(circle, color-mix(in srgb, var(--rp-radar) 9%, transparent) 0%, transparent 70%);
   }
 
   /* inner rings + crosshairs */
@@ -336,10 +353,10 @@ export const PANEL_CSS = /* css */`
     inset: 0;
     border-radius: 50%;
     background:
-      radial-gradient(circle, transparent 26px, rgba(45,212,191,0.22) 26px, transparent 27px),
-      radial-gradient(circle, transparent 12px, rgba(45,212,191,0.22) 12px, transparent 13px),
-      linear-gradient(rgba(45,212,191,0.18), rgba(45,212,191,0.18)) 50% 0 / 1px 100% no-repeat,
-      linear-gradient(rgba(45,212,191,0.18), rgba(45,212,191,0.18)) 0 50% / 100% 1px no-repeat;
+      radial-gradient(circle, transparent 26px, color-mix(in srgb, var(--rp-radar) 22%, transparent) 26px, transparent 27px),
+      radial-gradient(circle, transparent 12px, color-mix(in srgb, var(--rp-radar) 22%, transparent) 12px, transparent 13px),
+      linear-gradient(color-mix(in srgb, var(--rp-radar) 18%, transparent), color-mix(in srgb, var(--rp-radar) 18%, transparent)) 50% 0 / 1px 100% no-repeat,
+      linear-gradient(color-mix(in srgb, var(--rp-radar) 18%, transparent), color-mix(in srgb, var(--rp-radar) 18%, transparent)) 0 50% / 100% 1px no-repeat;
   }
 
   /* the sweep */
@@ -348,7 +365,7 @@ export const PANEL_CSS = /* css */`
     position: absolute;
     inset: 1px;
     border-radius: 50%;
-    background: conic-gradient(from 0deg, rgba(45, 212, 191, 0.55), rgba(45, 212, 191, 0.08) 70deg, transparent 90deg);
+    background: conic-gradient(from 0deg, color-mix(in srgb, var(--rp-radar) 55%, transparent), color-mix(in srgb, var(--rp-radar) 8%, transparent) 70deg, transparent 90deg);
   }
 
   @media (prefers-reduced-motion: no-preference) {
@@ -399,8 +416,8 @@ export const PANEL_CSS = /* css */`
 
   /* AI setup / model download */
   .rp-ai-setup {
-    background: linear-gradient(135deg, rgba(255, 180, 84, 0.1), rgba(255, 138, 61, 0.04));
-    border: 1px solid rgba(255, 180, 84, 0.25);
+    background: linear-gradient(135deg, color-mix(in srgb, var(--rp-accent) 10%, transparent), color-mix(in srgb, var(--rp-accent-2) 5%, transparent));
+    border: 1px solid color-mix(in srgb, var(--rp-accent) 25%, transparent);
     border-radius: var(--rp-radius);
     padding: 18px;
     margin-bottom: 12px;
@@ -409,7 +426,7 @@ export const PANEL_CSS = /* css */`
   .rp-ai-setup h3 {
     font-size: 13px;
     font-weight: 700;
-    color: var(--rp-amber);
+    color: var(--rp-accent);
     margin-bottom: 6px;
     letter-spacing: 0.2px;
   }
@@ -430,7 +447,7 @@ export const PANEL_CSS = /* css */`
 
   .rp-progress-fill {
     height: 100%;
-    background: linear-gradient(90deg, var(--rp-amber), var(--rp-amber-2));
+    background: linear-gradient(90deg, var(--rp-accent), var(--rp-accent-2));
     border-radius: 3px;
     transition: width 0.3s ease;
   }
@@ -446,7 +463,7 @@ export const PANEL_CSS = /* css */`
 
   /* Section label (SUMMARY / etc.) */
   .rp-section-label {
-    color: var(--rp-amber);
+    color: var(--rp-accent);
     margin-bottom: 7px;
     display: flex;
     align-items: center;
@@ -457,7 +474,7 @@ export const PANEL_CSS = /* css */`
     content: '';
     flex: 1;
     height: 1px;
-    background: linear-gradient(90deg, rgba(255, 180, 84, 0.3), transparent);
+    background: linear-gradient(90deg, color-mix(in srgb, var(--rp-accent) 30%, transparent), transparent);
   }
 
   /* Summary block — the "briefing" */
@@ -467,7 +484,7 @@ export const PANEL_CSS = /* css */`
     margin: 10px 0 0;
     padding: 8px 10px;
     border-left: 2px solid var(--rp-warn);
-    background: rgba(251, 191, 36, 0.07);
+    background: color-mix(in srgb, var(--rp-warn) 9%, transparent);
     border-radius: 0 var(--rp-radius-sm) var(--rp-radius-sm) 0;
     color: var(--rp-muted);
     font-size: 12px;
@@ -475,7 +492,7 @@ export const PANEL_CSS = /* css */`
   }
 
   .rp-summary-block {
-    background: rgba(17, 26, 48, 0.85);
+    background: color-mix(in srgb, var(--rp-surface) 88%, transparent);
     border: 1px solid var(--rp-border);
     border-radius: var(--rp-radius);
     padding: 14px 16px;
@@ -499,12 +516,12 @@ export const PANEL_CSS = /* css */`
     border: 1px solid;
     margin-bottom: 14px;
     animation: rp-fade-in 0.3s ease;
-    background: rgba(17, 26, 48, 0.7);
+    background: color-mix(in srgb, var(--rp-surface) 76%, transparent);
   }
 
-  .rp-reply-status.needed     { border-color: rgba(74, 222, 128, 0.3); }
-  .rp-reply-status.optional   { border-color: rgba(251, 191, 36, 0.3); }
-  .rp-reply-status.not-needed { border-color: rgba(248, 113, 113, 0.3); }
+  .rp-reply-status.needed     { border-color: color-mix(in srgb, var(--rp-success) 34%, transparent); }
+  .rp-reply-status.optional   { border-color: color-mix(in srgb, var(--rp-warn) 34%, transparent); }
+  .rp-reply-status.not-needed { border-color: color-mix(in srgb, var(--rp-error) 34%, transparent); }
 
   .rp-reply-status .rp-status-icon {
     width: 20px;
@@ -559,7 +576,7 @@ export const PANEL_CSS = /* css */`
     position: relative;
     background: var(--rp-surface);
     border: 1px solid var(--rp-border);
-    border-left: 3px solid var(--rp-amber);
+    border-left: 3px solid var(--rp-accent);
     border-radius: 10px;
     padding: 13px 14px 12px 15px;
     margin-bottom: 12px;
@@ -576,14 +593,14 @@ export const PANEL_CSS = /* css */`
   }
 
   .rp-reply-card:hover {
-    border-color: rgba(255, 180, 84, 0.35);
-    border-left-color: var(--rp-amber);
-    box-shadow: 0 6px 20px rgba(2, 6, 18, 0.5);
+    border-color: color-mix(in srgb, var(--rp-accent) 35%, transparent);
+    border-left-color: var(--rp-accent);
+    box-shadow: 0 6px 20px var(--rp-shadow-soft);
     transform: translateY(-1px);
   }
 
   .rp-reply-card-badge {
-    color: var(--rp-amber);
+    color: var(--rp-accent);
     margin-bottom: 7px;
     display: block;
   }
@@ -638,28 +655,28 @@ export const PANEL_CSS = /* css */`
   .rp-btn:active { transform: scale(0.95); }
 
   .rp-btn-primary {
-    background: linear-gradient(140deg, var(--rp-amber), var(--rp-amber-2));
-    color: #1c1204;
-    box-shadow: 0 2px 10px rgba(255, 170, 70, 0.25), inset 0 1px 0 rgba(255,255,255,0.3);
+    background: linear-gradient(140deg, var(--rp-accent), var(--rp-accent-2));
+    color: var(--rp-on-accent);
+    box-shadow: 0 2px 10px color-mix(in srgb, var(--rp-accent) 25%, transparent), inset 0 1px 0 color-mix(in srgb, var(--rp-elevate) 26%, transparent);
   }
 
   .rp-btn-primary:hover { filter: brightness(1.08); }
 
   .rp-btn-ghost {
-    background: rgba(255, 255, 255, 0.04);
+    background: var(--rp-hover);
     color: var(--rp-muted);
     border: 1px solid var(--rp-border);
   }
 
   .rp-btn-ghost:hover {
-    background: rgba(255, 255, 255, 0.08);
+    background: var(--rp-hover-strong);
     color: var(--rp-text);
   }
 
   .rp-btn-success {
-    background: rgba(74, 222, 128, 0.14);
+    background: color-mix(in srgb, var(--rp-success) 16%, transparent);
     color: var(--rp-success);
-    border: 1px solid rgba(74, 222, 128, 0.25);
+    border: 1px solid color-mix(in srgb, var(--rp-success) 28%, transparent);
   }
 
   .rp-btn svg {
@@ -685,7 +702,7 @@ export const PANEL_CSS = /* css */`
     letter-spacing: 1.2px;
     background: transparent;
     color: var(--rp-muted);
-    border: 1px dashed rgba(255, 180, 84, 0.4);
+    border: 1px dashed color-mix(in srgb, var(--rp-accent) 40%, transparent);
     cursor: pointer;
     transition: all var(--rp-transition);
     display: flex;
@@ -695,9 +712,9 @@ export const PANEL_CSS = /* css */`
   }
 
   .rp-generate-more-btn:hover:not(:disabled) {
-    background: rgba(255, 180, 84, 0.1);
-    border-color: var(--rp-amber);
-    color: var(--rp-amber);
+    background: color-mix(in srgb, var(--rp-accent) 10%, transparent);
+    border-color: var(--rp-accent);
+    color: var(--rp-accent);
   }
 
   .rp-generate-more-btn:disabled {
@@ -730,8 +747,8 @@ export const PANEL_CSS = /* css */`
     width: 50px;
     height: 50px;
     border-radius: 50%;
-    background: rgba(248, 113, 113, 0.1);
-    border: 1px solid rgba(248, 113, 113, 0.3);
+    background: color-mix(in srgb, var(--rp-error) 12%, transparent);
+    border: 1px solid color-mix(in srgb, var(--rp-error) 34%, transparent);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -764,7 +781,7 @@ export const PANEL_CSS = /* css */`
   .rp-draft-anyway {
     background: none;
     border: none;
-    color: var(--rp-amber);
+    color: var(--rp-accent);
     font-size: 13px;
     font-weight: 600;
     cursor: pointer;
@@ -776,7 +793,7 @@ export const PANEL_CSS = /* css */`
     transition: text-decoration-color var(--rp-transition);
   }
 
-  .rp-draft-anyway:hover { text-decoration-color: var(--rp-amber); }
+  .rp-draft-anyway:hover { text-decoration-color: var(--rp-accent); }
 
   /* Toast — cockpit advisory */
   .rp-toast {
@@ -785,13 +802,13 @@ export const PANEL_CSS = /* css */`
     right: 28px;
     background: var(--rp-surface);
     border: 1px solid var(--rp-border-strong);
-    border-left: 3px solid var(--rp-amber);
+    border-left: 3px solid var(--rp-accent);
     border-radius: 8px;
     padding: 10px 16px;
     font-size: 12.5px;
     font-weight: 500;
     color: var(--rp-text);
-    box-shadow: 0 10px 28px rgba(2, 6, 18, 0.6);
+    box-shadow: 0 10px 28px var(--rp-shadow-soft);
     z-index: 2147483647;
     animation: rp-toast-in 0.25s ease forwards;
     font-family: system-ui, sans-serif;
@@ -843,7 +860,7 @@ export const PANEL_CSS = /* css */`
   }
 
   .rp-field {
-    background: rgba(17, 26, 48, 0.6);
+    background: color-mix(in srgb, var(--rp-surface) 70%, transparent);
     border: 1px solid var(--rp-border);
     border-radius: var(--rp-radius);
     padding: 13px 14px;
@@ -868,7 +885,7 @@ export const PANEL_CSS = /* css */`
     font-weight: 700;
     line-height: 1;
     color: var(--rp-text);
-    text-shadow: 0 0 12px var(--rp-amber-glow);
+    text-shadow: 0 0 12px var(--rp-accent-glow);
   }
 
   .rp-field-hint {
@@ -879,7 +896,7 @@ export const PANEL_CSS = /* css */`
   }
 
   .rp-field .rp-section-label {
-    color: var(--rp-amber);
+    color: var(--rp-accent);
   }
 
   /* Sliders (shared look with the popup) */
@@ -890,7 +907,7 @@ export const PANEL_CSS = /* css */`
     height: 6px;
     border-radius: 999px;
     background: var(--rp-surface-2);
-    background-image: linear-gradient(90deg, var(--rp-amber), var(--rp-amber-2));
+    background-image: linear-gradient(90deg, var(--rp-accent), var(--rp-accent-2));
     background-repeat: no-repeat;
     background-size: 40% 100%;
     outline: none;
@@ -903,19 +920,19 @@ export const PANEL_CSS = /* css */`
     width: 17px;
     height: 17px;
     border-radius: 50%;
-    background: #fff5e6;
-    border: 3px solid var(--rp-amber-2);
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5), 0 0 0 4px rgba(255, 170, 70, 0.14);
+    background: color-mix(in srgb, var(--rp-accent) 18%, var(--rp-surface));
+    border: 3px solid var(--rp-accent-2);
+    box-shadow: 0 2px 8px color-mix(in srgb, var(--rp-shadow-color) 45%, transparent), 0 0 0 4px color-mix(in srgb, var(--rp-accent) 14%, transparent);
     cursor: pointer;
     transition: transform var(--rp-transition), box-shadow var(--rp-transition);
   }
 
   .rp-slider::-webkit-slider-thumb:hover { transform: scale(1.12); }
   .rp-slider:active::-webkit-slider-thumb {
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5), 0 0 0 6px rgba(255, 170, 70, 0.24);
+    box-shadow: 0 2px 8px color-mix(in srgb, var(--rp-shadow-color) 45%, transparent), 0 0 0 6px color-mix(in srgb, var(--rp-accent) 24%, transparent);
   }
   .rp-slider:focus-visible::-webkit-slider-thumb {
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5), 0 0 0 6px rgba(255, 170, 70, 0.3);
+    box-shadow: 0 2px 8px color-mix(in srgb, var(--rp-shadow-color) 45%, transparent), 0 0 0 6px color-mix(in srgb, var(--rp-accent) 30%, transparent);
   }
 
   /* Reference textarea */
@@ -938,8 +955,8 @@ export const PANEL_CSS = /* css */`
 
   .rp-textarea:focus {
     outline: none;
-    border-color: var(--rp-amber);
-    box-shadow: 0 0 0 3px rgba(255, 170, 70, 0.14);
+    border-color: var(--rp-accent);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--rp-accent) 14%, transparent);
   }
 
   /* Estimate readout */
@@ -951,7 +968,7 @@ export const PANEL_CSS = /* css */`
     margin: 4px 0 16px;
     border-radius: var(--rp-radius);
     border: 1px dashed var(--rp-border-strong);
-    background: rgba(45, 212, 191, 0.05);
+    background: color-mix(in srgb, var(--rp-radar) 6%, transparent);
     font-family: var(--rp-mono);
     font-size: 11px;
     letter-spacing: 0.5px;
