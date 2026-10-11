@@ -84,7 +84,9 @@ If it prints `"after-download"`, the model will download on first use (this may 
 1. Open `chrome://extensions/`
 2. Enable **Developer mode** (top right toggle)
 3. Click **Load unpacked**
-4. Select the root of this project folder (`reply_pilot-chrome-ext/`)
+4. Select the `release/` folder of this project
+
+`release/` is the built extension and is committed, so no build is needed; after changing the code, run `node build.js` and commit `release/` with it.
 
 ### 4. Use it
 

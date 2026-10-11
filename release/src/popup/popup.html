@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Reply Pilot</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="rp-pop">
+    <!-- Masthead -->
+    <header class="rp-pop-header">
+      <div class="rp-pop-logo" aria-hidden="true">
+        <svg viewBox="0 0 24 24">
+          <path d="M12 2 L20 20 L12 16 L4 20 Z" />
+        </svg>
+      </div>
+      <div class="rp-pop-titles">
+        <h1>Reply Pilot</h1>
+        <span class="rp-pop-sub">FLIGHT SETTINGS</span>
+      </div>
+    </header>
+
+    <!-- Messages-to-read card -->
+    <section class="rp-card">
+      <div class="rp-card-head">
+        <span class="rp-label">Messages to read</span>
+        <output class="rp-readout" id="rp-count-readout" for="rp-count">20</output>
+      </div>
+
+      <input
+        type="range"
+        id="rp-count"
+        class="rp-range"
+        min="6"
+        max="60"
+        step="1"
+        value="20"
+        aria-label="Number of messages to read"
+      />
+
+      <div class="rp-scale">
+        <span>6</span>
+        <span>Fewer · faster</span>
+        <span>60</span>
+      </div>
+
+      <div class="rp-presets" id="rp-presets">
+        <button type="button" class="rp-chip" data-value="10">10</button>
+        <button type="button" class="rp-chip" data-value="20">20</button>
+        <button type="button" class="rp-chip" data-value="35">35</button>
+        <button type="button" class="rp-chip" data-value="50">50</button>
+      </div>
+
+      <p class="rp-help">
+        Reply Pilot reads the most recent messages in the open chat —
+        <strong>your own and everyone else's counted together</strong> — up to this
+        number. Lower it if the extension feels slow or reads too much.
+      </p>
+    </section>
+
+    <!-- Footer -->
+    <footer class="rp-pop-footer">
+      <span class="rp-save" id="rp-save" data-state="idle">
+        <svg class="rp-save-check" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12 l5 5 L20 6" /></svg>
+        <span class="rp-save-text">Saved automatically</span>
+      </span>
+      <span class="rp-privacy">On-device · nothing leaves your machine</span>
+    </footer>
+  </div>
+
+  <script type="module" src="popup.js"></script>
+</body>
+</html>
